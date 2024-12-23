@@ -19,3 +19,7 @@ wormhole-spy-down:
 
 .PHONY: wormhole-spy-restart
 wormhole-spy-restart: wormhole-spy-down wormhole-spy-up
+
+.PHONY: run-publisher
+run-publisher: wormhole-spy-restart
+	npx tsx app/publishActivity $(CONFIG)

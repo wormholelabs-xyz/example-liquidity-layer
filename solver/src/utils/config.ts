@@ -3,10 +3,13 @@ import "@wormhole-foundation/sdk-evm/address";
 import "@wormhole-foundation/sdk-solana/address";
 
 import * as splToken from "@solana/spl-token";
-import { Commitment, Connection, FetchFn, PublicKey, PublicKeyInitData } from "@solana/web3.js";
-import { ethers } from "ethers";
-import { USDC_MINT_ADDRESS } from "@wormhole-foundation/example-liquidity-layer-solana/testing";
-import { defaultLogger } from "./logger";
+import { Commitment, Connection, FetchFn, PublicKey } from "@solana/web3.js";
+import {
+    MatchingEngineProgram,
+    PROGRAM_IDS,
+    ProgramId,
+} from "@wormhole-foundation/example-liquidity-layer-solana/matchingEngine";
+import { VaaSpy } from "@wormhole-foundation/example-liquidity-layer-solana/wormhole";
 import {
     Chain,
     chainToPlatform,
@@ -15,7 +18,13 @@ import {
     isChain,
     toChainId,
 } from "@wormhole-foundation/sdk-base";
-import { VAA, toNative } from "@wormhole-foundation/sdk-definitions";
+import { VAA } from "@wormhole-foundation/sdk-definitions";
+import { ethers } from "ethers";
+import mongoose from "mongoose";
+import { Logger } from "winston";
+import * as zmq from "zeromq";
+import { Publisher } from "../containers";
+import { defaultLogger } from "./logger";
 
 export const EVM_FAST_CONSISTENCY_LEVEL = 200;
 
@@ -30,29 +39,47 @@ enum Environment {
     DEVNET = "Devnet",
 }
 
-export type InputEndpointChainConfig = {
-    chain: Chain;
-    chainType: ChainType;
+export type LogConfig = {
+    level: string;
+    filename?: string;
+};
+
+export type ZmqChannelParameters = {
+    channel: string;
+    publish: boolean;
+};
+
+export const ZMQ_CHANNEL_NAMES = ["fastVaa", "finalizedVaa", "postedVaa", "auction"] as const;
+export type ZmqChannelName = (typeof ZMQ_CHANNEL_NAMES)[number];
+
+export type ZmqChannels = {
+    fastVaa: ZmqChannelParameters;
+    finalizedVaa: ZmqChannelParameters;
+    postedVaa: ZmqChannelParameters;
+    auction: ZmqChannelParameters;
+};
+
+export type SolanaConnectionConfig = {
     rpc: string;
-    endpoint: string;
+    commitment: Commitment;
+    addressLookupTable: PublicKey;
+    matchingEngine: ProgramId;
+    mint: PublicKey;
+    onAccountChange: OnAccountChangeConfig;
+    sourceTxHash: SourceTxHashConfig;
+    knownAtaOwners: PublicKey[];
+    computeUnits: ComputeUnitsConfig;
+    shouldPlaceInitialOffer: boolean;
+};
+
+export type OnAccountChangeConfig = {
+    postedVaaCommitment: Commitment;
+    auctionCommitment: Commitment;
 };
 
 export type SourceTxHashConfig = {
     maxRetries: number;
     retryBackoff: number;
-};
-
-export type SolanaConnectionConfig = {
-    rpc: string;
-    ws?: string;
-    commitment: Commitment;
-    nonceAccount?: PublicKeyInitData;
-    addressLookupTable: PublicKeyInitData;
-};
-
-export type LoggingConfig = {
-    app: string;
-    logic: string;
 };
 
 export type ComputeUnitsConfig = {
@@ -64,6 +91,22 @@ export type ComputeUnitsConfig = {
     initiateAuction: number;
 };
 
+export type VaaSpyConfig = {
+    host: string;
+    enableObservationCleanup: boolean;
+    observationSeenThresholdMs: number;
+    observationCleanupIntervalMs: number;
+    observationsToRemovePerInterval: number;
+    delayedThresholdMs: number;
+};
+
+export type InputEndpointChainConfig = {
+    chain: Chain;
+    chainType: ChainType;
+    rpc: string;
+    endpoint: string;
+};
+
 export type PricingParameters = {
     chain: Chain;
     probability: number;
@@ -72,13 +115,13 @@ export type PricingParameters = {
 
 export type EnvironmentConfig = {
     environment: Environment;
-    logging: LoggingConfig;
-    connection: SolanaConnectionConfig;
-    sourceTxHash: SourceTxHashConfig;
-    computeUnits: ComputeUnitsConfig;
+    log: LogConfig;
+    zmqChannels: ZmqChannels;
+    mongoDatabase: string;
+    solanaConnection: SolanaConnectionConfig;
+    vaaSpy: VaaSpyConfig;
     pricing: PricingParameters[];
     endpointConfig: InputEndpointChainConfig[];
-    knownAtaOwners: string[];
 };
 
 export type ChainConfig = InputEndpointChainConfig & {
@@ -124,25 +167,41 @@ export class AppConfig {
         );
     }
 
-    appLogLevel(): string {
-        return this._cfg.logging.app;
-    }
+    initLogger(label?: string): Logger {
+        const filename = this._cfg.log.filename;
 
-    logicLogLevel(): string {
-        return this._cfg.logging.logic;
+        const logger = defaultLogger({
+            label: label ?? "app",
+            level: this._cfg.log.level,
+            filename,
+        });
+
+        if (filename === undefined) {
+            console.log("Start logging");
+        } else {
+            console.log(`Start logging to file: ${filename}`);
+        }
+        logger.info(`Environment: ${this._cfg.environment}`);
+
+        return logger;
     }
 
     sourceTxHash(): { maxRetries: number; retryBackoff: number } {
-        return this._cfg.sourceTxHash;
+        return this._cfg.solanaConnection.sourceTxHash;
     }
 
-    solanaConnection(debug: boolean = false): Connection {
+    solanaConnection(debug?: boolean): Connection {
+        if (debug === undefined) {
+            return new Connection(this._cfg.solanaConnection.rpc, {
+                commitment: this._cfg.solanaConnection.commitment,
+            });
+        }
+
         const fetchLogger = defaultLogger({ label: "fetch", level: debug ? "debug" : "error" });
         fetchLogger.debug("Start debug logging Solana connection fetches.");
 
-        return new Connection(this._cfg.connection.rpc, {
-            commitment: this._cfg.connection.commitment,
-            wsEndpoint: this._cfg.connection.ws,
+        return new Connection(this._cfg.solanaConnection.rpc, {
+            commitment: this._cfg.solanaConnection.commitment,
             fetchMiddleware: function (
                 info: Parameters<FetchFn>[0],
                 init: Parameters<FetchFn>[1],
@@ -157,62 +216,74 @@ export class AppConfig {
         });
     }
 
-    solanaRpc(): string {
-        return this._cfg.connection.rpc;
-    }
-
     solanaCommitment(): Commitment {
-        return this._cfg.connection.commitment;
-    }
-
-    solanaNonceAccount(): PublicKey {
-        if (this._cfg.connection.nonceAccount === undefined) {
-            throw new Error("nonceAccount is not configured");
-        }
-
-        return new PublicKey(this._cfg.connection.nonceAccount);
+        return this._cfg.solanaConnection.commitment;
     }
 
     solanaAddressLookupTable(): PublicKey {
-        return new PublicKey(this._cfg.connection.addressLookupTable);
+        return new PublicKey(this._cfg.solanaConnection.addressLookupTable);
+    }
+
+    connectMongoDb(): Promise<typeof mongoose> {
+        return mongoose.connect(this._cfg.mongoDatabase);
+    }
+
+    initMatchingEngineProgram(): MatchingEngineProgram {
+        return new MatchingEngineProgram(
+            this.solanaConnection(),
+            this._cfg.solanaConnection.matchingEngine,
+            this._cfg.solanaConnection.mint,
+        );
+    }
+
+    initPublisher(channelName: ZmqChannelName): Publisher {
+        const params = this._cfg.zmqChannels[channelName];
+        return new Publisher(channelName, params.publish ? params.channel : undefined);
+    }
+
+    initSubscriber(channelName: ZmqChannelName, topic?: Buffer): zmq.Subscriber {
+        const params = this._cfg.zmqChannels[channelName];
+        const sock = new zmq.Subscriber();
+        sock.connect(params.channel);
+        sock.subscribe(topic ?? Buffer.alloc(0));
+
+        return sock;
     }
 
     verifySignaturesComputeUnits(): number {
-        return this._cfg.computeUnits.verifySignatures;
+        return this._cfg.solanaConnection.computeUnits.verifySignatures;
     }
 
     postVaaComputeUnits(): number {
-        return this._cfg.computeUnits.postVaa;
+        return this._cfg.solanaConnection.computeUnits.postVaa;
     }
 
     settleAuctionNoneCctpComputeUnits(): number {
-        return this._cfg.computeUnits.settleAuctionNoneCctp;
+        return this._cfg.solanaConnection.computeUnits.settleAuctionNoneCctp;
     }
 
     settleAuctionNoneLocalComputeUnits(): number {
-        return this._cfg.computeUnits.settleAuctionNoneLocal;
+        return this._cfg.solanaConnection.computeUnits.settleAuctionNoneLocal;
     }
 
     settleAuctionCompleteComputeUnits(): number {
-        return this._cfg.computeUnits.settleAuctionComplete;
+        return this._cfg.solanaConnection.computeUnits.settleAuctionComplete;
     }
 
     initiateAuctionComputeUnits(): number {
-        return this._cfg.computeUnits.initiateAuction;
+        return this._cfg.solanaConnection.computeUnits.initiateAuction;
     }
 
     knownAtaOwners(): PublicKey[] {
-        return this._cfg.knownAtaOwners.map((key) => new PublicKey(key));
+        return this._cfg.solanaConnection.knownAtaOwners;
     }
 
-    recognizedTokenAccounts(): PublicKey[] {
-        return this.knownAtaOwners().map((key) => {
-            return splToken.getAssociatedTokenAddressSync(USDC_MINT_ADDRESS, key);
-        });
+    recognizedAtaAddresses(): PublicKey[] {
+        return this.knownAtaOwners().map((key) => this.ataAddress(key));
     }
 
-    isRecognizedTokenAccount(tokenAccount: PublicKey): boolean {
-        return this.recognizedTokenAccounts().some((key) => key.equals(tokenAccount));
+    ataAddress(owner: PublicKey): PublicKey {
+        return splToken.getAssociatedTokenAddressSync(this._cfg.solanaConnection.mint, owner);
     }
 
     pricingParameters(chain: number): PricingParameters | null {
@@ -241,11 +312,26 @@ export class AppConfig {
             : WORMHOLESCAN_VAA_ENDPOINT_TESTNET;
     }
 
-    emitterFilterForSpy(): { chain: Chain; nativeAddress: string }[] {
+    spyEmitterFilter(): { chain: Chain; nativeAddress: string }[] {
         return this._cfg.endpointConfig.map((cfg) => ({
             chain: cfg.chain,
             nativeAddress: cfg.endpoint,
         }));
+    }
+
+    initVaaSpy(): VaaSpy {
+        return new VaaSpy({
+            spyHost: this._cfg.vaaSpy.host,
+            enableCleanup: this._cfg.vaaSpy.enableObservationCleanup,
+            seenThresholdMs: this._cfg.vaaSpy.observationSeenThresholdMs,
+            intervalMs: this._cfg.vaaSpy.observationCleanupIntervalMs,
+            maxToRemove: this._cfg.vaaSpy.observationsToRemovePerInterval,
+            vaaFilters: this.spyEmitterFilter(),
+        });
+    }
+
+    vaaDelayedThreshold(): number {
+        return this._cfg.vaaSpy.delayedThresholdMs;
     }
 
     isFastFinality(vaa: VAA): boolean {
@@ -254,6 +340,10 @@ export class AppConfig {
             this._chainCfgs[toChainId(vaa.emitterChain)]?.fastConsistencyLevel
         );
     }
+
+    shouldPlaceInitialOffer(): boolean {
+        return this._cfg.solanaConnection.shouldPlaceInitialOffer;
+    }
 }
 
 function validateEnvironmentConfig(cfg: any): EnvironmentConfig {
@@ -261,17 +351,15 @@ function validateEnvironmentConfig(cfg: any): EnvironmentConfig {
     for (const key of Object.keys(cfg)) {
         if (
             key !== "environment" &&
-            key !== "connection" &&
-            key !== "logging" &&
-            key !== "sourceTxHash" &&
-            key !== "computeUnits" &&
+            key !== "log" &&
+            key !== "zmqChannels" &&
+            key !== "mongoDatabase" &&
+            key !== "solanaConnection" &&
+            key !== "vaaSpy" &&
             key !== "endpointConfig" &&
-            key !== "pricing" &&
-            key !== "knownAtaOwners"
+            key !== "pricing"
         ) {
             throw new Error(`unexpected key: ${key}`);
-        } else if (cfg[key] === undefined) {
-            throw new Error(`${key} is required`);
         }
     }
 
@@ -282,66 +370,257 @@ function validateEnvironmentConfig(cfg: any): EnvironmentConfig {
         );
     }
 
-    // connection
-    for (const key of Object.keys(cfg.connection)) {
-        if (
-            key !== "rpc" &&
-            key !== "ws" &&
-            key !== "commitment" &&
-            key !== "nonceAccount" &&
-            key !== "addressLookupTable"
-        ) {
-            throw new Error(`unexpected key: connection.${key}`);
-        } else if (key !== "ws" && cfg.connection[key] === undefined) {
-            throw new Error(`connection.${key} is required`);
+    // log
+    if (cfg.log === undefined) {
+        throw new Error("log is required");
+    } else {
+        const requiredKeys = ["level"];
+
+        for (const key of Object.keys(cfg.log)) {
+            if (key === "filename") {
+                continue;
+            } else if (!requiredKeys.includes(key)) {
+                throw new Error(`unexpected key: log.${key}`);
+            }
+        }
+
+        for (const key of requiredKeys) {
+            if (cfg.log[key] === undefined) {
+                throw new Error(`log.${key} is required`);
+            }
+        }
+
+        if (typeof cfg.log.level !== "string") {
+            throw new Error("log.level must be a string");
+        }
+        if (cfg.log.filename !== undefined && typeof cfg.log.filename !== "string") {
+            throw new Error("log.filename must be a string if specified");
         }
     }
 
-    // check nonce account pubkey
-    if (cfg.connection.nonceAccount !== undefined) {
-        new PublicKey(cfg.connection.nonceAccount);
-    }
+    // zmqChannels
+    if (cfg.zmqChannels === undefined) {
+        throw new Error("zmqChannels is required");
+    } else {
+        const requiredKeys: string[] = [...ZMQ_CHANNEL_NAMES];
 
-    // check address lookup table pubkey
-    new PublicKey(cfg.connection.addressLookupTable);
+        for (const key of Object.keys(cfg.zmqChannels)) {
+            if (!requiredKeys.includes(key)) {
+                throw new Error(`unexpected key: zmqChannels.${key}`);
+            }
+        }
 
-    // Make sure the ATA owners list is nonzero.
-    if (cfg.knownAtaOwners === undefined || cfg.knownAtaOwners.length === 0) {
-        throw new Error("knownAtaOwners must be a non-empty array");
-    }
+        for (const key of requiredKeys) {
+            if (cfg.zmqChannels[key] === undefined) {
+                throw new Error(`zmqChannels.${key} is required`);
+            }
+        }
 
-    // logging
-    for (const key of Object.keys(cfg.logging)) {
-        if (key !== "app" && key !== "logic") {
-            throw new Error(`unexpected key: logging.${key}`);
-        } else if (cfg.logging[key] === undefined) {
-            throw new Error(`logging.${key} is required`);
+        for (const key of requiredKeys) {
+            if (typeof cfg.zmqChannels[key].channel !== "string") {
+                throw new Error(`zmqChannels.${key}.channel must be a string`);
+            }
+            if (typeof cfg.zmqChannels[key].publish !== "boolean") {
+                throw new Error(`zmqChannels.${key}.publish must be a boolean`);
+            }
         }
     }
 
-    // sourceTxHash
-    for (const key of Object.keys(cfg.sourceTxHash)) {
-        if (key !== "maxRetries" && key !== "retryBackoff") {
-            throw new Error(`unexpected key: sourceTxHash.${key}`);
-        } else if (cfg.sourceTxHash[key] === undefined) {
-            throw new Error(`sourceTxHash.${key} is required`);
+    // mongoDatabase
+    if (cfg.mongoDatabase === undefined) {
+        throw new Error("mongoDatabase is required");
+    } else if (typeof cfg.mongoDatabase !== "string") {
+        throw new Error("mongoDatabase must be a string");
+    }
+
+    // solanaConnection
+    if (cfg.solanaConnection === undefined) {
+        throw new Error("connection is required");
+    } else {
+        const requiredKeys = [
+            "rpc",
+            "commitment",
+            "addressLookupTable",
+            "matchingEngine",
+            "mint",
+            "onAccountChange",
+            "sourceTxHash",
+            "knownAtaOwners",
+            "computeUnits",
+            "shouldPlaceInitialOffer",
+        ];
+
+        for (const key of Object.keys(cfg.solanaConnection)) {
+            if (!requiredKeys.includes(key)) {
+                throw new Error(`unexpected key: solanaConnection.${key}`);
+            }
+        }
+
+        for (const key of requiredKeys) {
+            if (cfg.solanaConnection[key] === undefined) {
+                throw new Error(`solanaConnection.${key} is required`);
+            }
+        }
+
+        if (typeof cfg.solanaConnection.rpc !== "string") {
+            throw new Error("solanaConnection.rpc must be a string");
+        }
+        if (!isValidCommitment(cfg.solanaConnection.commitment)) {
+            throw new Error(
+                "solanaConnection.commitment must be either processed, confirmed, or finalized",
+            );
+        }
+        try {
+            cfg.solanaConnection.addressLookupTable = new PublicKey(
+                cfg.solanaConnection.addressLookupTable,
+            );
+        } catch (_) {
+            throw new Error(`solanaConnection.addressLookupTable must be a valid PublicKey`);
+        }
+        if (!PROGRAM_IDS.includes(cfg.solanaConnection.matchingEngine)) {
+            throw new Error("solanaConnection.matchingEngine must be a valid ProgramId");
+        }
+        try {
+            cfg.solanaConnection.mint = new PublicKey(cfg.solanaConnection.mint);
+        } catch (_) {
+            throw new Error(`solanaConnection.mint must be a valid PublicKey`);
+        }
+        // onAccountChange
+        {
+            const requiredKeys = ["postedVaaCommitment", "auctionCommitment"];
+
+            for (const key of Object.keys(cfg.solanaConnection.onAccountChange)) {
+                if (!requiredKeys.includes(key)) {
+                    throw new Error(`unexpected key: solanaConnection.onAccountChange.${key}`);
+                }
+            }
+
+            for (const key of requiredKeys) {
+                if (cfg.solanaConnection.onAccountChange[key] === undefined) {
+                    throw new Error(`solanaConnection.onAccountChange.${key} is required`);
+                } else if (!isValidCommitment(cfg.solanaConnection.onAccountChange[key])) {
+                    throw new Error(
+                        `solanaConnection.onAccountChange.${key} must be either processed, confirmed, or finalized`,
+                    );
+                }
+            }
+        }
+        // sourceTxHash
+        {
+            const requiredKeys = ["maxRetries", "retryBackoff"];
+
+            for (const key of Object.keys(cfg.solanaConnection.sourceTxHash)) {
+                if (!requiredKeys.includes(key)) {
+                    throw new Error(`unexpected key: solanaConnection.sourceTxHash.${key}`);
+                }
+            }
+
+            for (const key of requiredKeys) {
+                if (cfg.solanaConnection.sourceTxHash[key] === undefined) {
+                    throw new Error(`solanaConnection.sourceTxHash.${key} is required`);
+                }
+            }
+
+            if (typeof cfg.solanaConnection.sourceTxHash.maxRetries !== "number") {
+                throw new Error("solanaConnection.sourceTxHash.maxRetries must be a number");
+            }
+            if (typeof cfg.solanaConnection.sourceTxHash.retryBackoff !== "number") {
+                throw new Error("solanaConnection.sourceTxHash.retryBackoff must be a number");
+            }
+        }
+        // knownAtaOwners
+        {
+            if (!Array.isArray(cfg.solanaConnection.knownAtaOwners)) {
+                throw new Error("knownAtaOwners must be an array");
+            }
+
+            // Make sure the ATA owners list is nonzero.
+            if (cfg.solanaConnection.knownAtaOwners.length === 0) {
+                throw new Error("knownAtaOwners must be a non-empty array");
+            }
+
+            for (let i = 0; i < cfg.solanaConnection.knownAtaOwners.length; ++i) {
+                try {
+                    cfg.solanaConnection.knownAtaOwners[i] = new PublicKey(
+                        cfg.solanaConnection.knownAtaOwners[i],
+                    );
+                } catch (_) {
+                    throw new Error(
+                        `knownAtaOwner ${i}: ${cfg.solanaConnection.knownAtaOwners[i]} must be a valid PublicKey`,
+                    );
+                }
+            }
+        }
+        // computeUnits
+        {
+            const requiredKeys = [
+                "verifySignatures",
+                "postVaa",
+                "settleAuctionNoneCctp",
+                "settleAuctionNoneLocal",
+                "settleAuctionComplete",
+                "initiateAuction",
+            ];
+
+            for (const key of Object.keys(cfg.solanaConnection.computeUnits)) {
+                if (!requiredKeys.includes(key)) {
+                    throw new Error(`unexpected key: computeUnits.${key}`);
+                }
+            }
+
+            for (const key of requiredKeys) {
+                if (cfg.solanaConnection.computeUnits[key] === undefined) {
+                    throw new Error(`computeUnits.${key} is required`);
+                } else if (typeof cfg.solanaConnection.computeUnits[key] !== "number") {
+                    throw new Error(`computeUnits.${key} must be a number`);
+                }
+            }
+        }
+        // shouldPlaceInitialOffer
+        if (typeof cfg.solanaConnection.shouldPlaceInitialOffer !== "boolean") {
+            throw new Error("solanaConnection.shouldPlaceInitialOffer must be a boolean");
         }
     }
 
-    // computeUnits
-    for (const key of Object.keys(cfg.computeUnits)) {
-        if (
-            key !== "verifySignatures" &&
-            key !== "postVaa" &&
-            key !== "settleAuctionNoneCctp" &&
-            key !== "settleAuctionNoneLocal" &&
-            key !== "settleAuctionComplete" &&
-            key !== "initiateAuction" &&
-            key !== "improveOffer"
-        ) {
-            throw new Error(`unexpected key: computeUnits.${key}`);
-        } else if (cfg.computeUnits[key] === undefined) {
-            throw new Error(`computeUnits.${key} is required`);
+    // vaaSpy
+    if (cfg.vaaSpy === undefined) {
+        throw new Error("vaaSpy is required");
+    } else {
+        const requiredKeys = [
+            "host",
+            "enableObservationCleanup",
+            "observationSeenThresholdMs",
+            "observationCleanupIntervalMs",
+            "observationsToRemovePerInterval",
+            "delayedThresholdMs",
+        ];
+
+        for (const key of Object.keys(cfg.vaaSpy)) {
+            if (!requiredKeys.includes(key)) {
+                throw new Error(`unexpected key: vaaSpy.${key}`);
+            }
+        }
+
+        for (const key of requiredKeys) {
+            if (cfg.vaaSpy[key] === undefined) {
+                throw new Error(`vaaSpy.${key} is required`);
+            }
+        }
+
+        if (typeof cfg.vaaSpy.host != "string") {
+            throw new Error("vaaSpy.host must be a string");
+        }
+        if (typeof cfg.vaaSpy.enableObservationCleanup != "boolean") {
+            throw new Error("vaaSpy.enableObservationCleanup must be a boolean");
+        }
+        if (typeof cfg.vaaSpy.observationSeenThresholdMs != "number") {
+            throw new Error("vaaSpy.observationSeenThresholdMs must be a number");
+        }
+        if (typeof cfg.vaaSpy.observationCleanupIntervalMs != "number") {
+            throw new Error("vaaSpy.observationCleanupIntervalMs must be a number");
+        }
+        if (typeof cfg.vaaSpy.observationsToRemovePerInterval != "number") {
+            throw new Error("vaaSpy.observationsToRemovePerInterval must be a number");
         }
     }
 
@@ -374,76 +653,101 @@ function validateEnvironmentConfig(cfg: any): EnvironmentConfig {
         }
     }
 
-    // knownAtaOwners
-    if (!Array.isArray(cfg.knownAtaOwners)) {
-        throw new Error("knownAtaOwners must be an array");
-    }
-    for (const knownAtaOwner of cfg.knownAtaOwners) {
-        new PublicKey(knownAtaOwner);
-    }
-
     // endpointConfig
-    if (!Array.isArray(cfg.endpointConfig)) {
-        throw new Error("endpointConfig must be an array");
-    }
-    if (cfg.endpointConfig.length === 0) {
-        throw new Error("endpointConfig must contain at least one element");
-    }
-    for (const { chain, rpc, endpoint, chainType } of cfg.endpointConfig) {
-        if (chain === undefined) {
-            throw new Error("endpointConfig.chain is required");
+    if (cfg.endpointConfig === undefined) {
+        throw new Error("endpointConfig is required");
+    } else {
+        if (!Array.isArray(cfg.endpointConfig)) {
+            throw new Error("endpointConfig must be an array");
         }
-        if (!isChain(chain)) {
-            throw new Error(`invalid chain: ${chain}`);
+        if (cfg.endpointConfig.length === 0) {
+            throw new Error("endpointConfig must contain at least one element");
         }
-        if (chainType === undefined) {
-            throw new Error("endpointConfig.chainType is required");
+        for (const { chain, rpc, endpoint, chainType } of cfg.endpointConfig) {
+            if (chain === undefined) {
+                throw new Error("endpointConfig.chain is required");
+            }
+            if (!isChain(chain)) {
+                throw new Error(`invalid chain: ${chain}`);
+            }
+            if (chainType === undefined) {
+                throw new Error("endpointConfig.chainType is required");
+            }
+            if (chainType !== ChainType.Evm && chainType !== ChainType.Solana) {
+                throw new Error("endpointConfig.chainType must be either Evm or Solana");
+            }
+            if (rpc === undefined) {
+                throw new Error("endpointConfig.rpc is required");
+            }
+            if (endpoint === undefined) {
+                throw new Error("endpointConfig.endpoint is required");
+            }
+            // Address should be checksummed.
+            try {
+                if (endpoint != ethers.utils.getAddress(endpoint)) {
+                    throw new Error(
+                        `chain=${chain} address must be check-summed: ${ethers.utils.getAddress(
+                            endpoint,
+                        )}`,
+                    );
+                }
+            } catch (_) {
+                throw new Error(`chain=${chain} address must be a valid EVM address`);
+            }
         }
-        if (chainType !== ChainType.Evm && chainType !== ChainType.Solana) {
-            throw new Error("endpointConfig.chainType must be either Evm or Solana");
-        }
-        if (rpc === undefined) {
-            throw new Error("endpointConfig.rpc is required");
-        }
-        if (endpoint === undefined) {
-            throw new Error("endpointConfig.endpoint is required");
-        }
-        // Address should be checksummed.
-        if (endpoint != ethers.utils.getAddress(endpoint)) {
-            throw new Error(
-                `chain=${chain} address must be check-summed: ${ethers.utils.getAddress(endpoint)}`,
-            );
-        }
-        // This should succeed.
-        toNative(chain, endpoint).toString();
     }
 
     return {
         environment: cfg.environment,
-        connection: {
-            rpc: cfg.connection.rpc,
-            commitment: cfg.connection.commitment,
-            nonceAccount: cfg.connection.nonceAccount,
-            addressLookupTable: cfg.connection.addressLookupTable,
+        log: {
+            level: cfg.log.level,
+            filename: cfg.log.filename,
         },
-        logging: {
-            app: cfg.logging.app,
-            logic: cfg.logging.logic,
+        zmqChannels: {
+            fastVaa: cfg.zmqChannels.fastVaa,
+            finalizedVaa: cfg.zmqChannels.finalizedVaa,
+            postedVaa: cfg.zmqChannels.postedVaa,
+            auction: cfg.zmqChannels.auction,
         },
-        sourceTxHash: {
-            maxRetries: cfg.sourceTxHash.maxRetries,
-            retryBackoff: cfg.sourceTxHash.retryBackoff,
+        mongoDatabase: cfg.mongoDatabase,
+        solanaConnection: {
+            rpc: cfg.solanaConnection.rpc,
+            commitment: cfg.solanaConnection.commitment,
+            addressLookupTable: cfg.solanaConnection.addressLookupTable,
+            matchingEngine: cfg.solanaConnection.matchingEngine,
+            mint: cfg.solanaConnection.mint,
+            onAccountChange: {
+                postedVaaCommitment: cfg.solanaConnection.onAccountChange.postedVaaCommitment,
+                auctionCommitment: cfg.solanaConnection.onAccountChange.auctionCommitment,
+            },
+            sourceTxHash: {
+                maxRetries: cfg.solanaConnection.sourceTxHash.maxRetries,
+                retryBackoff: cfg.solanaConnection.sourceTxHash.retryBackoff,
+            },
+            knownAtaOwners: cfg.solanaConnection.knownAtaOwners,
+            computeUnits: {
+                verifySignatures: cfg.solanaConnection.computeUnits.verifySignatures,
+                postVaa: cfg.solanaConnection.computeUnits.postVaa,
+                settleAuctionNoneCctp: cfg.solanaConnection.computeUnits.settleAuctionNoneCctp,
+                settleAuctionNoneLocal: cfg.solanaConnection.computeUnits.settleAuctionNoneLocal,
+                settleAuctionComplete: cfg.solanaConnection.computeUnits.settleAuctionComplete,
+                initiateAuction: cfg.solanaConnection.computeUnits.initiateAuction,
+            },
+            shouldPlaceInitialOffer: cfg.solanaConnection.shouldPlaceInitialOffer,
         },
-        computeUnits: {
-            verifySignatures: cfg.computeUnits.verifySignatures,
-            postVaa: cfg.computeUnits.postVaa,
-            settleAuctionNoneCctp: cfg.computeUnits.settleAuctionNoneCctp,
-            settleAuctionNoneLocal: cfg.computeUnits.settleAuctionNoneLocal,
-            settleAuctionComplete: cfg.computeUnits.settleAuctionComplete,
-            initiateAuction: cfg.computeUnits.initiateAuction,
+        vaaSpy: {
+            host: cfg.vaaSpy.host,
+            enableObservationCleanup: cfg.vaaSpy.enableObservationCleanup,
+            observationSeenThresholdMs: cfg.vaaSpy.observationSeenThresholdMs,
+            observationCleanupIntervalMs: cfg.vaaSpy.observationCleanupIntervalMs,
+            observationsToRemovePerInterval: cfg.vaaSpy.observationsToRemovePerInterval,
+            delayedThresholdMs: cfg.vaaSpy.delayedThresholdMs,
         },
         pricing: cfg.pricing,
-        knownAtaOwners: cfg.knownAtaOwners,
         endpointConfig: cfg.endpointConfig,
     };
+}
+
+function isValidCommitment(value: string): boolean {
+    return value === "processed" || value === "confirmed" || value === "finalized";
 }

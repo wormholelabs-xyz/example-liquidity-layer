@@ -35,54 +35,56 @@ export async function getNonceAccountData(
 export async function sendTxBatch(
     connection: Connection,
     preparedTransactions: PreparedTransaction[],
-    logger?: winston.Logger,
+    logger: winston.Logger,
     retryCount?: number,
     cachedBlockhash?: BlockhashWithExpiryBlockHeight,
-): Promise<void> {
-    for (const preparedTransaction of preparedTransactions) {
+): Promise<Array<string | null>> {
+    retryCount ??= 5;
+
+    const numPrepared = preparedTransactions.length;
+    const txSigs = new Array<string | null>(numPrepared).fill(null);
+    for (let i = 0; i < numPrepared; ++i) {
+        const preparedTransaction = preparedTransactions[i];
         const skipPreFlight = preparedTransaction.confirmOptions?.skipPreflight ?? false;
 
         // If skipPreFlight is false, we will retry the transaction if it fails.
-        let success = false;
+        let txSig: string | null = null;
         let counter = 0;
-        while (!success && counter < (retryCount ?? 5)) {
-            const response = await sendTx(connection, preparedTransaction, logger, cachedBlockhash);
-
-            if (skipPreFlight) {
-                break;
-            }
-
-            success = response.success;
-            counter++;
-
-            if (logger !== undefined && !success) {
+        while (txSig === null && counter <= retryCount) {
+            if (counter > 0) {
                 logger.error(`Retrying failed transaction, attempt=${counter}`);
+
+                // Wait half a slot before trying again.
+                await new Promise((resolve) => setTimeout(resolve, 200));
             }
 
-            // Wait half a slot before trying again.
-            await new Promise((resolve) => setTimeout(resolve, 200));
+            const response = await sendTx(connection, preparedTransaction, logger, cachedBlockhash);
+            txSig = response.txSig;
+
+            if (!skipPreFlight) {
+                ++counter;
+            }
         }
 
-        if (!success) {
-            return;
+        // If we have any failures along the way, abandon ship.
+        if (txSig === null) {
+            break;
+        } else {
+            txSigs[i] = txSig;
         }
     }
+
+    return txSigs;
 }
 
 export async function sendTx(
     connection: Connection,
     preparedTransaction: PreparedTransaction,
-    logger?: winston.Logger,
+    logger: winston.Logger,
     cachedBlockhash?: BlockhashWithExpiryBlockHeight,
-): Promise<{ success: boolean; txSig: string | void }> {
-    const {
-        nonceAccount,
-        ixs,
-        computeUnits,
-        feeMicroLamports,
-        signers,
-        addressLookupTableAccounts,
-    } = preparedTransaction;
+): Promise<{ success: boolean; txSig: string | null }> {
+    const { ixs, computeUnits, feeMicroLamports, signers, addressLookupTableAccounts } =
+        preparedTransaction;
 
     const payer = signers[0];
     const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits });
@@ -92,36 +94,16 @@ export async function sendTx(
 
     // Uptick nonce account, or fetch recent block hash.
     const [messageV0, confirmStrategy] = await (async () => {
-        if (nonceAccount === undefined) {
-            const latestBlockhash = cachedBlockhash ?? (await connection.getLatestBlockhash());
+        const latestBlockhash = cachedBlockhash ?? (await connection.getLatestBlockhash());
 
-            return [
-                new TransactionMessage({
-                    payerKey: payer.publicKey,
-                    recentBlockhash: latestBlockhash.blockhash,
-                    instructions: [computeLimitIx, computeUnitPriceIx, ...ixs],
-                }).compileToV0Message(addressLookupTableAccounts),
-                latestBlockhash,
-            ];
-        } else {
-            const { nonce, recentSlot, advanceIxs } = await getNonceAccountData(
-                connection,
-                nonceAccount,
-            );
-
-            return [
-                new TransactionMessage({
-                    payerKey: payer.publicKey,
-                    recentBlockhash: nonce,
-                    instructions: [...advanceIxs, computeLimitIx, computeUnitPriceIx, ...ixs],
-                }).compileToV0Message(addressLookupTableAccounts),
-                {
-                    minContextSlot: recentSlot,
-                    nonceAccountPubkey: nonceAccount,
-                    nonceValue: nonce,
-                },
-            ];
-        }
+        return [
+            new TransactionMessage({
+                payerKey: payer.publicKey,
+                recentBlockhash: latestBlockhash.blockhash,
+                instructions: [computeLimitIx, computeUnitPriceIx, ...ixs],
+            }).compileToV0Message(addressLookupTableAccounts),
+            latestBlockhash,
+        ];
     })();
 
     const tx = new VersionedTransaction(messageV0);
@@ -148,25 +130,23 @@ export async function sendTx(
 
             if (err.logs !== undefined) {
                 const logs: string[] = err.logs;
-                if (logger !== undefined) {
-                    logger.error(logs.join("\n"));
-                }
+                logger.error(logs.join("\n"));
             } else {
-                if (logger !== undefined) {
-                    logger.error(err);
-                }
+                logger.error(err);
             }
+
+            return null;
         });
 
-    if (logger !== undefined) {
-        if (preparedTransaction.txName !== undefined) {
-            logger.info(
-                `Transaction type: ${preparedTransaction.txName}, signature: ${txSignature}`,
-            );
-        } else {
-            logger.info(`Transaction signature: ${txSignature}`);
-        }
+    if (preparedTransaction.txName !== undefined) {
+        logger.info(`Tx (${preparedTransaction.txName}): ${txSignature}`);
+    } else {
+        logger.info(`Tx: ${txSignature}`);
     }
 
     return { success, txSig: txSignature };
+}
+
+export function bumpComputeUnits(bump: number): number {
+    return (255 - bump) * 1_500;
 }

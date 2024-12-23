@@ -1,14 +1,17 @@
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { FastMarketOrder } from "@wormhole-foundation/example-liquidity-layer-definitions";
 import { PreparedTransaction } from "@wormhole-foundation/example-liquidity-layer-solana";
-import { MatchingEngineProgram } from "@wormhole-foundation/example-liquidity-layer-solana/matchingEngine";
+import {
+    AuctionConfig,
+    MatchingEngineProgram,
+} from "@wormhole-foundation/example-liquidity-layer-solana/matchingEngine";
 import { ChainId, toChainId } from "@wormhole-foundation/sdk-base";
-import { VAA, deserialize, keccak256 } from "@wormhole-foundation/sdk-definitions";
+import { deserialize, keccak256, VAA } from "@wormhole-foundation/sdk-definitions";
 import { utils as coreUtils } from "@wormhole-foundation/sdk-solana-core";
-import * as winston from "winston";
-import * as utils from ".";
+import { Logger } from "winston";
+import * as utils from "../../src/utils";
 
-export interface PlaceInitialOfferAccounts {
+interface PlaceInitialOfferAccounts {
     fastVaaAccount: PublicKey;
     auction: PublicKey;
     fromRouterEndpoint: PublicKey;
@@ -17,19 +20,19 @@ export interface PlaceInitialOfferAccounts {
 
 function getPlaceInitialOfferAccounts(
     matchingEngine: MatchingEngineProgram,
-    fastVaaBytes: Uint8Array,
-    fromChain: ChainId | number,
-    toChain: ChainId | number,
+    fastVaa: VAA,
+    toChain: ChainId,
 ): PlaceInitialOfferAccounts {
-    const vaa = deserialize("Uint8Array", fastVaaBytes);
-    const doubleHash = keccak256(vaa.hash);
+    const doubleHash = keccak256(fastVaa.hash);
     const fastVaaAccount = coreUtils.derivePostedVaaKey(
         matchingEngine.coreBridgeProgramId(),
-        Buffer.from(vaa.hash),
+        Buffer.from(fastVaa.hash),
     );
     const auction = matchingEngine.auctionAddress(doubleHash);
-    const fromRouterEndpoint = matchingEngine.routerEndpointAddress(fromChain as ChainId);
-    const toRouterEndpoint = matchingEngine.routerEndpointAddress(toChain as ChainId);
+    const fromRouterEndpoint = matchingEngine.routerEndpointAddress(
+        toChainId(fastVaa.emitterChain),
+    );
+    const toRouterEndpoint = matchingEngine.routerEndpointAddress(toChain);
 
     return {
         fastVaaAccount,
@@ -59,27 +62,23 @@ function isFeeHighEnough(
 }
 
 export async function handlePlaceInitialOffer(
-    connection: Connection,
     cfg: utils.AppConfig,
     matchingEngine: MatchingEngineProgram,
     fastVaa: VAA,
-    rawVaa: Uint8Array,
     order: FastMarketOrder,
     payer: Keypair,
-    logicLogger: winston.Logger,
-): Promise<PreparedTransaction[]> {
-    const unproccessedTxns: PreparedTransaction[] = [];
+    logicLogger: Logger,
+    auctionConfig?: AuctionConfig,
+): Promise<PreparedTransaction[] | undefined> {
+    const connection = matchingEngine.program.provider.connection;
+
+    const txs: PreparedTransaction[] = [];
 
     // Derive accounts necessary to place the intial offer. We can bypass deriving these
     // accounts by posting the VAA before generating the `placeIniitialOfferTx`, but we
     // don't here to reduce complexity.
     const { fastVaaAccount, auction, fromRouterEndpoint, toRouterEndpoint } =
-        getPlaceInitialOfferAccounts(
-            matchingEngine,
-            rawVaa,
-            toChainId(fastVaa.emitterChain),
-            toChainId(order.targetChain),
-        );
+        getPlaceInitialOfferAccounts(matchingEngine, fastVaa, toChainId(order.targetChain));
 
     // Bail if the auction is already started.
     const isAuctionStarted = await connection
@@ -88,7 +87,7 @@ export async function handlePlaceInitialOffer(
 
     if (isAuctionStarted) {
         logicLogger.warn(`Auction already started, sequence=${fastVaa.sequence}`);
-        return unproccessedTxns;
+        return;
     }
 
     // See if the `maxFee` meets our minimum price threshold.
@@ -100,11 +99,14 @@ export async function handlePlaceInitialOffer(
         logicLogger.warn(
             `Skipping sequence=${fastVaa.sequence} fee too low, maxFee=${order.maxFee}, fvWithEdge=${fvWithEdge}`,
         );
-        return unproccessedTxns;
+        return;
     }
 
     // See if we have enough funds to place the initial offer.
-    const notionalDeposit = await matchingEngine.computeNotionalSecurityDeposit(order.amountIn, 2);
+    const notionalDeposit = await matchingEngine.computeNotionalSecurityDeposit(
+        order.amountIn,
+        auctionConfig,
+    );
     const totalDeposit = order.amountIn + order.maxFee + notionalDeposit;
     const isSufficient = utils.isBalanceSufficient(connection, payer.publicKey, totalDeposit);
 
@@ -112,29 +114,27 @@ export async function handlePlaceInitialOffer(
         logicLogger.warn(
             `Insufficient balance to place initial offer, sequence=${fastVaa.sequence}`,
         );
-        return unproccessedTxns;
+        return;
     }
 
-    // Create the instructions to post the fast VAA if it hasn't been posted already.
-    const isPosted = await connection
-        .getAccountInfo(fastVaaAccount, { dataSlice: { offset: 0, length: 1 } })
-        .then((info) => info !== null);
+    logicLogger.debug(`Prepare verify signatures and post VAA, sequence=${fastVaa.sequence}`);
+    const preparedPostVaaTxs = await utils.preparePostVaaTxs(
+        connection,
+        cfg,
+        matchingEngine,
+        payer,
+        fastVaa,
+        { skipPreflight: true, commitment: cfg.solanaCommitment() },
+    );
+    logicLogger.debug(
+        `Process ${preparedPostVaaTxs.length} transactions to verify signatures and post VAA`,
+    );
 
-    if (!isPosted) {
-        logicLogger.debug(`Prepare verify signatures and post VAA, sequence=${fastVaa.sequence}`);
-        const preparedPostVaaTxs = await utils.preparePostVaaTxs(
-            connection,
-            cfg,
-            matchingEngine,
-            payer,
-            fastVaa,
-            { commitment: cfg.solanaCommitment() },
-        );
-        logicLogger.debug(
-            `Process ${preparedPostVaaTxs.length} transactions to verify signatures and post VAA`,
-        );
-        unproccessedTxns.push(...preparedPostVaaTxs);
-    }
+    // Attempt to post the VAA and place the initial offer in the same transaction.
+    const {
+        ixs: [postVaaIx],
+        computeUnits: postVaaComputeUnits,
+    } = preparedPostVaaTxs.pop()!;
 
     logicLogger.debug(
         `Prepare initialize auction, sequence=${fastVaa.sequence}, auction=${auction}`,
@@ -144,21 +144,28 @@ export async function handlePlaceInitialOffer(
             payer: payer.publicKey,
             fastVaa: fastVaaAccount,
             auction,
+            auctionConfig:
+                auctionConfig === undefined
+                    ? undefined
+                    : matchingEngine.auctionConfigAddress(auctionConfig?.id),
             fromRouterEndpoint,
             toRouterEndpoint,
         },
         { offerPrice: order.maxFee, totalDeposit },
         [payer],
         {
-            computeUnits: cfg.initiateAuctionComputeUnits(),
+            computeUnits: postVaaComputeUnits + cfg.initiateAuctionComputeUnits(),
             feeMicroLamports: 10,
         },
         {
-            commitment: cfg.solanaCommitment(),
-            skipPreflight: !isPosted,
+            // If the auction config is undefined, we spend time fetching when computing the
+            // security deposit. It is not worth it to skip preflight in this case.
+            skipPreflight: auctionConfig !== undefined,
         },
     );
-    unproccessedTxns.push(initializeAuctionTx);
 
-    return unproccessedTxns;
+    initializeAuctionTx.ixs = [postVaaIx, ...initializeAuctionTx.ixs];
+    txs.push(...preparedPostVaaTxs, initializeAuctionTx);
+
+    return txs;
 }

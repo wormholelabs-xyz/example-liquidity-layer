@@ -48,14 +48,14 @@ function getSettleAuctionAccounts(
     finalizedVaaBytes: Uint8Array | Buffer,
     fastVaaBytes: Uint8Array | Buffer,
 ): SettleAuctionAccounts {
-    const fastVaa = deserialize("Uint8Array", fastVaaBytes);
+    const fastVaa = deserialize("Uint8Array", Uint8Array.from(fastVaaBytes));
     const auction = matchingEngine.auctionAddress(keccak256(fastVaa.hash));
     const fastVaaAccount = coreUtils.derivePostedVaaKey(
         matchingEngine.coreBridgeProgramId(),
         Buffer.from(fastVaa.hash),
     );
 
-    const finalizedVaa = deserialize("Uint8Array", finalizedVaaBytes);
+    const finalizedVaa = deserialize("Uint8Array", Uint8Array.from(finalizedVaaBytes));
     const finalizedVaaAccount = coreUtils.derivePostedVaaKey(
         matchingEngine.coreBridgeProgramId(),
         Buffer.from(finalizedVaa.hash),
@@ -109,7 +109,7 @@ export async function handleSettleAuction(
     }
 
     logicLogger.debug(`Attempting to parse fast VAA, sequence=${fastVaaSequence}`);
-    const fastVaaParsed = deserialize("Uint8Array", vaaResponse.vaa);
+    const fastVaaParsed = deserialize("Uint8Array", Uint8Array.from(vaaResponse.vaa));
     const fastOrder = utils.tryParseFastMarketOrder(Buffer.from(fastVaaParsed.payload));
     if (fastOrder === undefined) {
         logicLogger.error(`Failed to parse FastMarketOrder, sequence=${fastVaaSequence}`);
@@ -124,7 +124,7 @@ export async function handleSettleAuction(
     );
 
     // Fetch the auction data.
-    let auctionData: Auction = {} as Auction;
+    let auctionData: Auction | undefined;
     try {
         auctionData = await matchingEngine.fetchAuction({ address: auction });
 
