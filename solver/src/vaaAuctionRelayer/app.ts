@@ -1,12 +1,12 @@
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { PreparedTransaction } from "@wormhole-foundation/example-liquidity-layer-solana";
+import { MatchingEngineProgram } from "@wormhole-foundation/example-liquidity-layer-solana/matchingEngine";
+import { VaaSpy } from "@wormhole-foundation/example-liquidity-layer-solana/wormhole";
 import "dotenv/config";
 import * as fs from "fs";
-import { MatchingEngineProgram } from "@wormhole-foundation/example-liquidity-layer-solana/matchingEngine";
-import { PreparedTransaction } from "@wormhole-foundation/example-liquidity-layer-solana";
-import * as utils from "../utils";
 import * as winston from "winston";
-import { VaaSpy } from "@wormhole-foundation/example-liquidity-layer-solana/wormhole";
 import { CachedBlockhash } from "../containers";
+import * as utils from "../utils";
 
 const MATCHING_ENGINE_PROGRAM_ID = "mPydpGUWxzERTNpyvTKdvS7v8kvw5sgwfiP8WQFrXVS";
 const USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
@@ -25,7 +25,7 @@ async function main(argv: string[]) {
     const cfgJson = JSON.parse(fs.readFileSync(argv[2], "utf-8"));
     const cfg = new utils.AppConfig(cfgJson);
 
-    const connection = new Connection(cfg.solanaRpc(), cfg.solanaCommitment());
+    const connection = cfg.solanaConnection();
     const matchingEngine = new MatchingEngineProgram(
         connection,
         MATCHING_ENGINE_PROGRAM_ID,
@@ -35,7 +35,9 @@ async function main(argv: string[]) {
     if (process.env.SOLANA_PRIVATE_KEY === undefined) {
         throw new Error("SOLANA_PRIVATE_KEY is undefined");
     }
-    const payer = Keypair.fromSecretKey(Buffer.from(process.env.SOLANA_PRIVATE_KEY, "base64"));
+    const payer = Keypair.fromSecretKey(
+        Uint8Array.from(Buffer.from(process.env.SOLANA_PRIVATE_KEY, "base64")),
+    );
 
     const logicLogger = utils.defaultLogger({ label: "logic", level: cfg.logicLogLevel() });
     logicLogger.debug("Start logging logic");
@@ -54,7 +56,7 @@ async function main(argv: string[]) {
     // Connect to spy.
     const spy = new VaaSpy({
         spyHost: SPY_HOST,
-        vaaFilters: cfg.emitterFilterForSpy(),
+        vaaFilters: cfg.spyEmitterFilter(),
         enableCleanup: ENABLE_CLEANUP,
         seenThresholdMs: SEEN_THRESHOLD_MS,
         intervalMs: INTERVAL_MS,
@@ -88,7 +90,7 @@ async function main(argv: string[]) {
                     cfg,
                     matchingEngine,
                     parsed,
-                    raw,
+                    Uint8Array.from(raw),
                     fastOrder,
                     payer,
                     logicLogger,
@@ -108,7 +110,7 @@ async function main(argv: string[]) {
                     matchingEngine,
                     logicLogger,
                     parsed,
-                    raw,
+                    Uint8Array.from(raw),
                     payer,
                 );
                 txnBatch.push(...unprocessedTxns);

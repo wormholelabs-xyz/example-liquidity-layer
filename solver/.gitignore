@@ -1,2 +1,5 @@
 /cfg/**/*.json
 !/cfg/**/sample.*.json
+/logs
+*.log
+*.out

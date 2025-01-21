@@ -19,3 +19,20 @@ wormhole-spy-down:
 
 .PHONY: wormhole-spy-restart
 wormhole-spy-restart: wormhole-spy-down wormhole-spy-up
+
+.PHONY: run-publisher
+run-publisher: wormhole-spy-restart
+	npx tsx app/publishActivity $(CONFIG)
+
+.PHONY: run-solver
+run-solver:
+	npx tsx app/runExampleSolver $(CONFIG)
+
+.PHONY: create-lut
+create-lut:
+	npx tsx app/createAddressLookupTable $(CONFIG)
+
+.PHONY: dependencies
+dependencies:
+	cd .. && $(MAKE) build
+	cd .. && npm run build --workspace solana

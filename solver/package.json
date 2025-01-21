@@ -14,10 +14,10 @@
     },
     "dependencies": {
         "@solana/spl-token": "^0.4.6",
-        "@wormhole-foundation/example-liquidity-layer-evm": "0.0.1",
         "@wormhole-foundation/example-liquidity-layer-solana": "0.0.1",
         "@wormhole-foundation/sdk-base": "^0.10.9",
         "@wormhole-foundation/sdk-definitions": "^0.10.9",
-        "@wormhole-foundation/sdk-solana": "^0.10.9"
+        "@wormhole-foundation/sdk-solana": "^0.10.9",
+        "zeromq": "^6.1.2"
     }
 }
