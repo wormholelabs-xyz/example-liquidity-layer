@@ -3,13 +3,6 @@ import { ChainId, isChainId, toChainId } from "@wormhole-foundation/sdk-base";
 import { deserialize, keccak256 } from "@wormhole-foundation/sdk-definitions";
 export * from "./spy";
 
-export type EncodedVaa = {
-    status: number;
-    writeAuthority: PublicKey;
-    version: number;
-    buf: Buffer;
-};
-
 export type PostedVaaV1 = {
     consistencyLevel: number;
     timestamp: number;
@@ -29,7 +22,6 @@ export type EmitterInfo = {
 };
 
 export class VaaAccount {
-    private _encodedVaa?: EncodedVaa;
     private _postedVaaV1?: PostedVaaV1;
 
     static async fetch(connection: Connection, addr: PublicKey): Promise<VaaAccount> {
@@ -37,22 +29,13 @@ export class VaaAccount {
         if (accInfo === null) {
             throw new Error("no VAA account info found");
         }
-        const { data } = accInfo;
+        return VaaAccount.deserialize(accInfo.data);
+    }
 
+    static deserialize(data: Buffer): VaaAccount {
         let offset = 0;
-        const disc = data.subarray(offset, (offset += 8));
-        if (disc.equals(Uint8Array.from([226, 101, 163, 4, 133, 160, 84, 245]))) {
-            const status = data[offset];
-            offset += 1;
-            const writeAuthority = new PublicKey(data.subarray(offset, (offset += 32)));
-            const version = data[offset];
-            offset += 1;
-            const bufLen = data.readUInt32LE(offset);
-            offset += 4;
-            const buf = data.subarray(offset, (offset += bufLen));
-
-            return new VaaAccount({ encodedVaa: { status, writeAuthority, version, buf } });
-        } else if (disc.subarray(0, (offset -= 4)).equals(Uint8Array.from([118, 97, 97, 1]))) {
+        const disc = data.subarray(offset, (offset += 4));
+        if (disc.equals(Uint8Array.from([118, 97, 97, 1]))) {
             const consistencyLevel = data[offset];
             offset += 1;
             const timestamp = data.readUInt32LE(offset);
@@ -93,14 +76,7 @@ export class VaaAccount {
     }
 
     emitterInfo(): EmitterInfo {
-        if (this._encodedVaa !== undefined) {
-            const parsed = deserialize("Uint8Array", this._encodedVaa.buf);
-            return {
-                chain: toChainId(parsed.emitterChain),
-                address: Array.from(parsed.emitterAddress.toUint8Array()),
-                sequence: parsed.sequence,
-            };
-        } else if (this._postedVaaV1 !== undefined) {
+        if (this._postedVaaV1 !== undefined) {
             const { emitterChain: chain, emitterAddress: address, sequence } = this._postedVaaV1;
             return {
                 chain,
@@ -113,9 +89,7 @@ export class VaaAccount {
     }
 
     timestamp(): number {
-        if (this._encodedVaa !== undefined) {
-            return deserialize("Uint8Array", this._encodedVaa.buf).timestamp;
-        } else if (this._postedVaaV1 !== undefined) {
+        if (this._postedVaaV1 !== undefined) {
             return this._postedVaaV1.timestamp;
         } else {
             throw new Error("impossible: timestamp() failed");
@@ -123,9 +97,7 @@ export class VaaAccount {
     }
 
     payload(): Buffer {
-        if (this._encodedVaa !== undefined) {
-            return Buffer.from(deserialize("Uint8Array", this._encodedVaa.buf).payload);
-        } else if (this._postedVaaV1 !== undefined) {
+        if (this._postedVaaV1 !== undefined) {
             return this._postedVaaV1.payload;
         } else {
             throw new Error("impossible: payload() failed");
@@ -133,9 +105,7 @@ export class VaaAccount {
     }
 
     hash(): Uint8Array {
-        if (this._encodedVaa !== undefined) {
-            return deserialize("Uint8Array", this._encodedVaa.buf).hash;
-        } else if (this._postedVaaV1 !== undefined) {
+        if (this._postedVaaV1 !== undefined) {
             const {
                 consistencyLevel,
                 timestamp,
@@ -167,13 +137,6 @@ export class VaaAccount {
         return keccak256(this.hash());
     }
 
-    get encodedVaa(): EncodedVaa {
-        if (this._encodedVaa === undefined) {
-            throw new Error("VaaAccount does not have encodedVaa");
-        }
-        return this._encodedVaa;
-    }
-
     get postedVaaV1(): PostedVaaV1 {
         if (this._postedVaaV1 === undefined) {
             throw new Error("VaaAccount does not have postedVaaV1");
@@ -181,13 +144,8 @@ export class VaaAccount {
         return this._postedVaaV1;
     }
 
-    private constructor(data: { encodedVaa?: EncodedVaa; postedVaaV1?: PostedVaaV1 }) {
-        const { encodedVaa, postedVaaV1 } = data;
-        if (encodedVaa !== undefined && postedVaaV1 !== undefined) {
-            throw new Error("VaaAccount cannot have both encodedVaa and postedVaaV1");
-        }
-
-        this._encodedVaa = encodedVaa;
+    private constructor(data: { postedVaaV1?: PostedVaaV1 }) {
+        const { postedVaaV1 } = data;
         this._postedVaaV1 = postedVaaV1;
     }
 }

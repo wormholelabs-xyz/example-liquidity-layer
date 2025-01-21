@@ -53,7 +53,17 @@ export class VaaSpy {
 
         const that = this;
         stream.on("data", ({ vaaBytes: raw }) => {
-            const ctx: VaaContext = { raw, parsed: deserialize("Uint8Array", raw) };
+            let parsed;
+
+            // With new chain IDs potentially being added, we need to break out if a chain ID is not
+            // recognized.
+            try {
+                parsed = deserialize("Uint8Array", raw);
+            } catch (_) {
+                return;
+            }
+
+            const ctx = { raw, parsed };
 
             if (vaaFilters === null) {
                 return that.processUniqueVaa(ctx, callback);

@@ -57,6 +57,7 @@ import {
 } from "./state";
 import { ChainId, toChainId, isChainId } from "@wormhole-foundation/sdk-base";
 import { decodeIdlAccount } from "anchor-0.29.0/dist/cjs/idl";
+import { FastMarketOrder } from "@wormhole-foundation/example-liquidity-layer-definitions";
 
 export const PROGRAM_IDS = [
     "MatchingEngine11111111111111111111111111111",
@@ -95,6 +96,7 @@ export type MatchingEngineCommonAccounts = WormholeCoreBridgeAccounts & {
     rent: PublicKey;
     clock: PublicKey;
     custodian: PublicKey;
+    eventAuthority: PublicKey;
     cctpMintRecipient: PublicKey;
     tokenMessenger: PublicKey;
     tokenMinter: PublicKey;
@@ -107,6 +109,8 @@ export type MatchingEngineCommonAccounts = WormholeCoreBridgeAccounts & {
     mint: PublicKey;
     localToken: PublicKey;
     tokenMessengerMinterCustodyToken: PublicKey;
+    tokenMessengerMinterEventAuthority: PublicKey;
+    messageTransmitterEventAuthority: PublicKey;
 };
 
 export type BurnAndPublishAccounts = {
@@ -445,6 +449,30 @@ export class MatchingEngineProgram {
         return cctpMessageAddress(this.ID, auction);
     }
 
+    async reclaimCctpMessageTx(
+        accounts: {
+            payer: PublicKey;
+            cctpMessage: PublicKey;
+        },
+        cctpAttestation: Buffer,
+        signers: Signer[],
+        opts: PreparedTransactionOptions,
+        confirmOptions?: ConfirmOptions,
+    ): Promise<PreparedTransaction> {
+        return this.reclaimCctpMessageIx(accounts, cctpAttestation).then((ix) => {
+            return {
+                ixs: [ix],
+                signers,
+                computeUnits: opts.computeUnits,
+                feeMicroLamports: opts.feeMicroLamports,
+                nonceAccount: opts.nonceAccount,
+                addressLookupTableAccounts: opts.addressLookupTableAccounts,
+                txName: "reclaimCctpMessage",
+                confirmOptions,
+            };
+        });
+    }
+
     async reclaimCctpMessageIx(
         accounts: {
             payer: PublicKey;
@@ -725,6 +753,7 @@ export class MatchingEngineProgram {
             clock: SYSVAR_CLOCK_PUBKEY,
             custodian,
             cctpMintRecipient,
+            eventAuthority: this.eventAuthorityAddress(),
             coreBridgeConfig,
             coreEmitterSequence,
             coreFeeCollector,
@@ -743,6 +772,8 @@ export class MatchingEngineProgram {
             mint,
             localToken: tokenMessengerMinterProgram.localTokenAddress(mint),
             tokenMessengerMinterCustodyToken: tokenMessengerMinterProgram.custodyTokenAddress(mint),
+            tokenMessengerMinterEventAuthority: tokenMessengerMinterProgram.eventAuthorityAddress(),
+            messageTransmitterEventAuthority: messageTransmitterProgram.eventAuthorityAddress(),
         };
     }
 
@@ -1272,6 +1303,7 @@ export class MatchingEngineProgram {
             fromRouterEndpoint: PublicKey;
             toRouterEndpoint: PublicKey;
             auction: PublicKey;
+            auctionConfig?: PublicKey;
         },
         args: {
             offerPrice: Uint64;
@@ -1281,13 +1313,15 @@ export class MatchingEngineProgram {
         opts: PreparedTransactionOptions,
         confirmOptions?: ConfirmOptions,
     ): Promise<PreparedTransaction> {
-        const { payer, fastVaa, auction, fromRouterEndpoint, toRouterEndpoint } = accounts;
+        const { payer, fastVaa, auction, fromRouterEndpoint, toRouterEndpoint, auctionConfig } =
+            accounts;
         const ixs = await this.placeInitialOfferCctpIx(
             {
                 payer,
                 feePayer: signers[0]?.publicKey,
                 fastVaa,
                 auction,
+                auctionConfig,
                 fromRouterEndpoint,
                 toRouterEndpoint,
             },
@@ -1297,7 +1331,7 @@ export class MatchingEngineProgram {
         return {
             ixs,
             signers,
-            computeUnits: opts.computeUnits!,
+            computeUnits: opts.computeUnits,
             feeMicroLamports: opts.feeMicroLamports,
             nonceAccount: opts.nonceAccount,
             addressLookupTableAccounts: opts.addressLookupTableAccounts,
@@ -1416,17 +1450,7 @@ export class MatchingEngineProgram {
         opts: PreparedTransactionOptions,
         confirmOptions?: ConfirmOptions,
     ): Promise<PreparedTransaction> {
-        const { participant, auction, auctionConfig, bestOfferToken } = accounts;
-
-        const ixs = await this.improveOfferIx(
-            {
-                participant,
-                auction,
-                auctionConfig,
-                bestOfferToken,
-            },
-            args,
-        );
+        const ixs = await this.improveOfferIx(accounts, args);
 
         return {
             ixs,
@@ -1490,27 +1514,66 @@ export class MatchingEngineProgram {
         return [approveIx, improveOfferIx];
     }
 
+    async prepareOrderResponseCctpTx(
+        accounts: {
+            payer: PublicKey;
+            fastVaa: PublicKey;
+            finalizedVaa: PublicKey;
+            fromRouterEndpoint: PublicKey;
+            baseFeeToken?: PublicKey;
+        },
+        args: CctpMessageArgs & { fastMarketOrder: FastMarketOrder; fastVaaHash: VaaHash },
+        signers: Signer[],
+        opts: PreparedTransactionOptions,
+        confirmOptions?: ConfirmOptions,
+    ): Promise<PreparedTransaction> {
+        const ix = await this.prepareOrderResponseCctpIx(accounts, args);
+
+        return {
+            ixs: [ix],
+            signers,
+            computeUnits: opts.computeUnits,
+            feeMicroLamports: opts.feeMicroLamports,
+            nonceAccount: opts.nonceAccount,
+            addressLookupTableAccounts: opts.addressLookupTableAccounts,
+            txName: "prepareOrderResponseCctp",
+            confirmOptions,
+        };
+    }
+
     async prepareOrderResponseCctpIx(
         accounts: {
             payer: PublicKey;
             fastVaa: PublicKey;
             finalizedVaa: PublicKey;
+            fromRouterEndpoint?: PublicKey;
             baseFeeToken?: PublicKey;
         },
-        args: CctpMessageArgs,
+        args: CctpMessageArgs & { fastMarketOrder?: FastMarketOrder; fastVaaHash?: VaaHash },
     ): Promise<TransactionInstruction> {
         const { payer, fastVaa, finalizedVaa } = accounts;
 
-        let { baseFeeToken } = accounts;
-        baseFeeToken ??= await splToken.getAssociatedTokenAddress(this.mint, payer);
+        let { baseFeeToken, fromRouterEndpoint } = accounts;
+        baseFeeToken ??= splToken.getAssociatedTokenAddressSync(this.mint, payer);
 
-        const fastVaaAcct = await VaaAccount.fetch(this.program.provider.connection, fastVaa);
-        const fromEndpoint = this.routerEndpointAddress(fastVaaAcct.emitterInfo().chain);
+        let { fastMarketOrder, fastVaaHash } = args;
+        if (
+            fastMarketOrder === undefined ||
+            fastVaaHash === undefined ||
+            fromRouterEndpoint === undefined
+        ) {
+            const fastVaaAcct = await VaaAccount.fetch(this.program.provider.connection, fastVaa);
+            fastVaaHash = fastVaaAcct.digest();
+            fromRouterEndpoint ??= this.routerEndpointAddress(fastVaaAcct.emitterInfo().chain);
 
-        const { fastMarketOrder } = LiquidityLayerMessage.decode(fastVaaAcct.payload());
-        if (fastMarketOrder === undefined) {
-            throw new Error("Message not FastMarketOrder");
+            const msg = LiquidityLayerMessage.decode(fastVaaAcct.payload());
+            if (msg.fastMarketOrder === undefined) {
+                throw new Error("Message not FastMarketOrder");
+            }
+
+            fastMarketOrder ??= msg.fastMarketOrder;
         }
+
         const toEndpoint = this.routerEndpointAddress(toChainId(fastMarketOrder.targetChain));
 
         const { encodedCctpMessage } = args;
@@ -1533,13 +1596,17 @@ export class MatchingEngineProgram {
             encodedCctpMessage,
         );
 
-        const preparedOrderResponse = this.preparedOrderResponseAddress(fastVaaAcct.digest());
+        const preparedOrderResponse = this.preparedOrderResponseAddress(fastVaaHash);
         return this.program.methods
             .prepareOrderResponseCctp(args)
             .accounts({
                 payer,
                 custodian: this.checkedCustodianComposite(),
-                fastOrderPath: this.fastOrderPathComposite({ fastVaa, fromEndpoint, toEndpoint }),
+                fastOrderPath: this.fastOrderPathComposite({
+                    fastVaa,
+                    fromEndpoint: fromRouterEndpoint,
+                    toEndpoint,
+                }),
                 finalizedVaa: this.liquidityLayerVaaComposite(finalizedVaa),
                 preparedOrderResponse,
                 preparedCustodyToken: this.preparedCustodyTokenAddress(preparedOrderResponse),
@@ -1612,7 +1679,7 @@ export class MatchingEngineProgram {
         const preparedTx: PreparedTransaction = {
             ixs: [prepareOrderResponseIx, settleAuctionCompletedIx],
             signers,
-            computeUnits: opts.computeUnits!,
+            computeUnits: opts.computeUnits,
             feeMicroLamports: opts.feeMicroLamports,
             nonceAccount: opts.nonceAccount,
             addressLookupTableAccounts: opts.addressLookupTableAccounts,
@@ -1721,7 +1788,7 @@ export class MatchingEngineProgram {
         const preparedTx: PreparedTransaction = {
             ixs: [prepareOrderResponseIx, settleAuctionNoneIx],
             signers,
-            computeUnits: opts.computeUnits!,
+            computeUnits: opts.computeUnits,
             feeMicroLamports: opts.feeMicroLamports,
             nonceAccount: opts.nonceAccount,
             addressLookupTableAccounts: opts.addressLookupTableAccounts,
@@ -1896,6 +1963,9 @@ export class MatchingEngineProgram {
             .instruction();
     }
 
+    /**
+     * @deprecated Use `executeFastOrderLocalTx` and `executeFastOrderCctpTx` instead.
+     */
     async executeFastOrderTx(
         accounts: {
             payer: PublicKey;
@@ -1965,11 +2035,96 @@ export class MatchingEngineProgram {
         return {
             ixs: [executeOrderIx],
             signers,
-            computeUnits: opts.computeUnits!,
+            computeUnits: opts.computeUnits,
             feeMicroLamports: opts.feeMicroLamports,
             nonceAccount: opts.nonceAccount,
             addressLookupTableAccounts: opts.addressLookupTableAccounts,
             txName: "executeOrder",
+            confirmOptions,
+        };
+    }
+
+    async executeFastOrderLocalTx(
+        accounts: {
+            payer: PublicKey;
+            fastVaa: PublicKey;
+            reservedSequence: PublicKey;
+            executorToken: PublicKey;
+            auction: PublicKey;
+            auctionConfig: PublicKey;
+            bestOfferToken: PublicKey;
+            initialOfferToken: PublicKey;
+            initialParticipant: PublicKey;
+            reserveBeneficiary?: PublicKey;
+        },
+        signers: Signer[],
+        opts: PreparedTransactionOptions,
+        confirmOptions?: ConfirmOptions,
+    ): Promise<PreparedTransaction> {
+        const {
+            payer,
+            fastVaa,
+            reservedSequence,
+            executorToken,
+            auction,
+            auctionConfig,
+            bestOfferToken,
+            initialOfferToken,
+            initialParticipant,
+            reserveBeneficiary,
+        } = accounts;
+
+        const ix = await this.executeFastOrderLocalIx({
+            payer,
+            fastVaa,
+            reservedSequence,
+            executorToken,
+            auction,
+            auctionConfig,
+            bestOfferToken,
+            initialOfferToken,
+            initialParticipant,
+            reserveBeneficiary,
+        });
+
+        return {
+            ixs: [ix],
+            signers,
+            computeUnits: opts.computeUnits,
+            feeMicroLamports: opts.feeMicroLamports,
+            nonceAccount: opts.nonceAccount,
+            addressLookupTableAccounts: opts.addressLookupTableAccounts,
+            txName: "executeOrderLocal",
+            confirmOptions,
+        };
+    }
+
+    async executeFastOrderCctpTx(
+        accounts: {
+            payer: PublicKey;
+            fastVaa: PublicKey;
+            executorToken: PublicKey;
+            auction: PublicKey;
+            auctionConfig: PublicKey;
+            bestOfferToken: PublicKey;
+            initialOfferToken: PublicKey;
+            initialParticipant: PublicKey;
+        },
+        targetChain: ChainId,
+        signers: Signer[],
+        opts: PreparedTransactionOptions,
+        confirmOptions?: ConfirmOptions,
+    ): Promise<PreparedTransaction> {
+        const ix = await this.executeFastOrderCctpIx(accounts, { targetChain });
+
+        return {
+            ixs: [ix],
+            signers,
+            computeUnits: opts.computeUnits,
+            feeMicroLamports: opts.feeMicroLamports,
+            nonceAccount: opts.nonceAccount,
+            addressLookupTableAccounts: opts.addressLookupTableAccounts,
+            txName: "executeOrderCctp",
             confirmOptions,
         };
     }
@@ -2164,6 +2319,43 @@ export class MatchingEngineProgram {
                 systemProgram: SystemProgram.programId,
             },
             definedOpts: { fastVaaHash, sourceChain, orderSender, targetChain },
+        };
+    }
+
+    async reserveFastFillSequenceActiveAuctionTx(
+        accounts: {
+            payer: PublicKey;
+            fastVaa: PublicKey;
+            auctionConfig: PublicKey;
+        },
+        args: {
+            fastVaaHash: VaaHash;
+            sourceChain: ChainId;
+            orderSender: Array<number>;
+            targetChain: ChainId;
+        },
+        signers: Signer[],
+        opts: PreparedTransactionOptions,
+        confirmOptions?: ConfirmOptions,
+    ) {
+        const { payer, fastVaa } = accounts;
+        const ix = await this.reserveFastFillSequenceActiveAuctionIx(
+            {
+                payer,
+                fastVaa,
+            },
+            args,
+        );
+
+        return {
+            ixs: [ix],
+            signers,
+            computeUnits: opts.computeUnits,
+            feeMicroLamports: opts.feeMicroLamports,
+            nonceAccount: opts.nonceAccount,
+            addressLookupTableAccounts: opts.addressLookupTableAccounts,
+            txName: "reserveFastFillSequenceActiveAuction",
+            confirmOptions,
         };
     }
 
@@ -2567,18 +2759,24 @@ export class MatchingEngineProgram {
         }
     }
 
-    async computeMinOfferDelta(offerPrice: Uint64): Promise<bigint> {
-        const { minOfferDeltaBps } = await this.fetchAuctionParameters();
+    async computeMinOfferDelta(
+        offerPrice: Uint64,
+        parameters?: AuctionParameters,
+    ): Promise<bigint> {
+        const { minOfferDeltaBps } = parameters ?? (await this.fetchAuctionParameters());
         return (uint64ToBigInt(offerPrice) * BigInt(minOfferDeltaBps)) / FEE_PRECISION_MAX + 1n;
     }
 
-    async computeNotionalSecurityDeposit(amountIn: Uint64, configId?: number) {
-        const { securityDepositBase, securityDepositBps } = await this.fetchAuctionParameters(
-            configId,
-        );
+    async computeNotionalSecurityDeposit(amountIn: Uint64, config?: number | AuctionConfig) {
+        let params: AuctionParameters;
+        if (config === undefined || typeof config === "number") {
+            params = await this.fetchAuctionParameters(config);
+        } else {
+            params = config.parameters;
+        }
         return (
-            uint64ToBigInt(securityDepositBase) +
-            (uint64ToBigInt(amountIn) * BigInt(securityDepositBps)) / FEE_PRECISION_MAX
+            uint64ToBigInt(params.securityDepositBase) +
+            (uint64ToBigInt(amountIn) * BigInt(params.securityDepositBps)) / FEE_PRECISION_MAX
         );
     }
 }
