@@ -2478,6 +2478,7 @@ version = "0.0.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "bincode",
  "cfg-if",
  "hex",
  "hex-literal",
