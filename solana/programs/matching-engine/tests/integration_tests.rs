@@ -2,6 +2,8 @@ use solana_program_test::{ProgramTest, tokio};
 use solana_sdk::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction
 };
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use solana_program::{bpf_loader_upgradeable, system_program};
 use anchor_spl::associated_token::spl_associated_token_account;
@@ -18,7 +20,9 @@ use matching_engine::{
     },
 };
 
-mod common;
+mod utils;
+
+use utils::token_account::{add_account_from_file, create_token_account, read_keypair_from_file};
 
 // Configures the program ID and CCTP mint recipient based on the environment
 cfg_if::cfg_if! {
@@ -33,9 +37,11 @@ cfg_if::cfg_if! {
         const CCTP_MINT_RECIPIENT: Pubkey = solana_sdk::pubkey!("35iwWKi7ebFyXNaqpswd1g9e9jrjvqWPV39nCQPaBbX1");
     }
 }
+const USDC_MINT_ADDRESS: Pubkey = solana_sdk::pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+const OWNER_KEYPAIR_PATH: &str = "tests/keys/pFCBP4bhqdSsrWUVTgqhPsLrfEdChBK17vgFM7TxjxQ.json";
+const USDC_MINT_FIXTURE_PATH: &str = "tests/fixtures/usdc_mint.json";
 
 // TODO: When modularising, impl function for the struct to add new solvers
-
 
 #[tokio::test]
 pub async fn test_initialize_program() {
@@ -47,52 +53,14 @@ pub async fn test_initialize_program() {
     );
 
     // Create necessary keypairs
-    // TODO: Load the key from the fixture file
-    let owner = Keypair::new();
-    // TODO: Understand wtf is owner_assistant
+    let owner = read_keypair_from_file(OWNER_KEYPAIR_PATH);
     let owner_assistant = Keypair::new();
     let fee_recipient = Keypair::new();
 
-    // Derive the ATA for fee_recipient
-    let fee_recipient_token_account = spl_associated_token_account::get_associated_token_address(
-        &fee_recipient.pubkey(),
-        &USDC_MINT_ADDRESS,
-    );
-
-    // Create the token account state
-    // TODO: Use the system instruction to initialize account instead
-    let fee_recipient_token_account_state = anchor_spl::token::spl_token::state::Account {
-        mint: USDC_MINT_ADDRESS,
-        owner: fee_recipient.pubkey(),
-        amount: 0,
-        delegate: None.into(),
-        state: anchor_spl::token::spl_token::state::AccountState::Initialized,
-        is_native: None.into(),
-        delegated_amount: 0,
-        close_authority: None.into(),
-    };
-
-    // TODO: This is going to be changed when using the system instruction to initialize account
-    // Pack the state into bytes
-    let mut fee_recipient_account_data: Vec<u8> = vec![0; anchor_spl::token::TokenAccount::LEN];
-    anchor_spl::token::spl_token::state::Account::pack(fee_recipient_token_account_state, &mut fee_recipient_account_data).unwrap();
-    
-    // TODO: Modularise this into common or somewhere else
-    // Add the ATA account to the test environment
-    program_test.add_account(
-        fee_recipient_token_account,
-        solana_sdk::account::Account {
-            lamports: anchor_lang::solana_program::rent::Rent::default().minimum_balance(anchor_spl::token::TokenAccount::LEN),
-            data: fee_recipient_account_data,
-            owner: anchor_spl::token::spl_token::id(),
-            executable: false,
-            rent_epoch: 0,
-        },
-    );
-
-    // TODO: Change to use the start_and_get_context function (cleaner)
     // Start and get test context
-    let (mut banks_client, payer, recent_blockhash) = program_test.start().await;
+    let test_context = Rc::new(RefCell::new(program_test.start_with_context().await));
+
+    let fee_recipient_token_account = create_token_account(test_context.clone(), &fee_recipient, &owner, &USDC_MINT_ADDRESS).await;
     
     // TODO: Modularise this into common or somewhere else
     // Derive PDAs
@@ -110,17 +78,16 @@ pub async fn test_initialize_program() {
         &PROGRAM_ID,
     );
 
-    // TODO: Figure out what initial values make sense
     // Create AuctionParameters
     let auction_params = matching_engine::state::AuctionParameters {
-        user_penalty_reward_bps: 0,
-        initial_penalty_bps: 0,
-        duration: 0,
-        grace_period: 0,
-        penalty_period: 0,
-        min_offer_delta_bps: 0,
-        security_deposit_base: 0,
-        security_deposit_bps: 0,
+        user_penalty_reward_bps: 250_000, // 25%
+        initial_penalty_bps: 250_000, // 25%
+        duration: 2,
+        grace_period: 5,
+        penalty_period: 10,
+        min_offer_delta_bps: 20_000, // 2%
+        security_deposit_base: 4_200_000,
+        security_deposit_bps: 5_000, // 0.5%
     };
     
     // Create the instruction data
@@ -130,11 +97,11 @@ pub async fn test_initialize_program() {
         },
     };
 
+    // FIXME: This probably does not work
     let program_data = Pubkey::find_program_address(
         &[PROGRAM_ID.as_ref()],
         &bpf_loader_upgradeable::id(),
     ).0;
-
 
     // Get account metas
     let accounts = Initialize {
@@ -142,10 +109,10 @@ pub async fn test_initialize_program() {
         custodian,
         auction_config,
         owner_assistant: owner_assistant.pubkey(),
-        fee_recipient: fee_recipient_token_account,
-        fee_recipient_token: fee_recipient_token_account,
+        fee_recipient: fee_recipient.pubkey(),
+        fee_recipient_token: fee_recipient_token_account.address,
         cctp_mint_recipient: CCTP_MINT_RECIPIENT,
-        usdc: matching_engine::accounts::Usdc{mint: USDC_MINT_ADDRESS,},
+        usdc: matching_engine::accounts::Usdc{mint: USDC_MINT_ADDRESS},
         program_data: program_data,
         upgrade_manager_authority: common::UPGRADE_MANAGER_AUTHORITY,
         upgrade_manager_program: common::UPGRADE_MANAGER_PROGRAM_ID,
@@ -165,15 +132,15 @@ pub async fn test_initialize_program() {
     // Create and sign transaction
     let mut transaction = Transaction::new_with_payer(
         &[instruction],
-        Some(&payer.pubkey()),
+        Some(&owner.pubkey()),
     );
-    transaction.sign(&[&payer, &owner], recent_blockhash);
+    transaction.sign(&[&owner], test_context.borrow().last_blockhash);
 
     // Process transaction
-    banks_client.process_transaction(transaction).await.unwrap();
+    test_context.borrow_mut().banks_client.process_transaction(transaction).await.unwrap();
 
     // Verify the results
-    let custodian_account = banks_client
+    let custodian_account = test_context.borrow_mut().banks_client
         .get_account(custodian)
         .await
         .unwrap()
@@ -184,4 +151,12 @@ pub async fn test_initialize_program() {
     assert_eq!(custodian_data.owner, owner.pubkey());
     assert_eq!(custodian_data.owner_assistant, owner_assistant.pubkey());
     // TODO: Add more assertions
+}
+
+fn get_program_data() -> Vec<u8> {
+    let state = solana_sdk::bpf_loader_upgradeable::UpgradeableLoaderState::ProgramData {
+        slot: 0,
+        upgrade_authority_address: Some(common::UPGRADE_MANAGER_AUTHORITY),
+    };
+    bincode::serialize(&state).unwrap()
 }
