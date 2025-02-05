@@ -1,6 +1,6 @@
 use solana_program_test::{ProgramTest, tokio};
 use solana_sdk::{
-    instruction::Instruction, program_pack::Pack, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction
+    instruction::Instruction, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction
 };
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -51,6 +51,8 @@ pub async fn test_initialize_program() {
         PROGRAM_ID,
         None,
     );
+
+    add_account_from_file(&mut program_test, USDC_MINT_FIXTURE_PATH);
 
     // Create necessary keypairs
     let owner = read_keypair_from_file(OWNER_KEYPAIR_PATH);
@@ -153,6 +155,7 @@ pub async fn test_initialize_program() {
     // TODO: Add more assertions
 }
 
+// TODO: Use this function in the test
 fn get_program_data() -> Vec<u8> {
     let state = solana_sdk::bpf_loader_upgradeable::UpgradeableLoaderState::ProgramData {
         slot: 0,
