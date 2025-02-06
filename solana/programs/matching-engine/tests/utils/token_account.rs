@@ -1,7 +1,6 @@
-use solana_sdk::{program_pack::Pack, transaction::Transaction, pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction::create_account};
+use solana_sdk::{program_pack::Pack, account::AccountSharedData, transaction::Transaction, pubkey::Pubkey, signature::Keypair, signer::Signer};
 use anchor_spl::token::spl_token;
 use anchor_spl::associated_token::spl_associated_token_account;
-use spl_token::instruction::initialize_account;
 use solana_program_test::{ProgramTest, ProgramTestContext};
 use serde_json::Value;
 use std::{cell::RefCell, fs, rc::Rc, str::FromStr};
@@ -24,15 +23,13 @@ pub struct TokenAccountFixture {
 #[allow(dead_code, unused_variables)]
 pub async fn create_token_account(
     test_ctx: Rc<RefCell<ProgramTestContext>>,
-    payer: &Keypair,
     owner: &Keypair,
     mint: &Pubkey,
 ) -> TokenAccountFixture {
 
     let test_ctx_ref = Rc::clone(&test_ctx);
 
-
-    // Derive the ATA for fee_recipient
+    // Derive the Associated Token Account (ATA) for fee_recipient
     let token_account_address = spl_associated_token_account::get_associated_token_address(
         &owner.pubkey(),
         mint,
@@ -40,46 +37,63 @@ pub async fn create_token_account(
 
     // Inspired by https://github.com/mrgnlabs/marginfi-v2/blob/3b7bf0aceb684a762c8552412001c8d355033119/test-utils/src/spl.rs#L56
     let token_account = {
-        let mut test_ctx = test_ctx.borrow_mut();
-
-        let rent = test_ctx.banks_client.get_rent().await.unwrap();
+        let mut ctx = test_ctx.borrow_mut();  // Single mutable borrow
         
-        let init_token_account_ix = initialize_account(
-            &spl_token::id(),
-            &owner.pubkey(),
-            mint,
-            &token_account_address,
-        ).expect("Unable to create initialize token account instruction");
-
-        let create_token_account_ix = create_account(
-            &payer.pubkey(),
-            &token_account_address,
-            rent.minimum_balance(spl_token::state::Account::LEN),
-            spl_token::state::Account::LEN as u64,
-            &spl_token::id(),
+        // Create instruction using borrowed values
+        let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account(
+            &ctx.payer.pubkey(),    // Funding account
+            &owner.pubkey(),        // Wallet address
+            mint,                   // Mint address
+            &spl_token::id(),       // Token program
         );
 
-        let tx = Transaction::new_signed_with_payer(
-            &[
-                init_token_account_ix,
-                create_token_account_ix,
-            ],
-            Some(&payer.pubkey()),
-            &[&test_ctx.payer, &owner],
-            test_ctx.last_blockhash,
+        // Create and sign transaction
+        let mut tx = Transaction::new_signed_with_payer(
+            &[create_ata_ix.clone()],
+            Some(&ctx.payer.pubkey()),
+            &[&ctx.payer],
+            ctx.last_blockhash,
         );
 
-        test_ctx.banks_client.process_transaction(tx).await.unwrap();
-
-        let token_account = test_ctx.banks_client.get_account(token_account_address).await.unwrap().unwrap();
-
-        TokenAccountFixture {
-            test_ctx: test_ctx_ref,
-            address: token_account_address,
-            account: spl_token::state::Account::unpack(&token_account.data).unwrap(),
+        // Process with retries
+        for _ in 0..5 {
+            match ctx.banks_client.process_transaction(tx.clone()).await {
+                Ok(_) => break,
+                Err(e) => {
+                    println!("Transaction failed: {:?}", e);
+                    ctx.last_blockhash = ctx.banks_client.get_latest_blockhash().await.unwrap();
+                    tx = Transaction::new_signed_with_payer(
+                        &[create_ata_ix.clone()],
+                        Some(&ctx.payer.pubkey()),
+                        &[&ctx.payer],
+                        ctx.last_blockhash,
+                    );
+                }
+            }
         }
+
+        // Get account with retries
+        let mut account = None;
+        for _ in 0..5 {
+            match ctx.banks_client.get_account(token_account_address).await.unwrap() {
+                Some(acc) => {
+                    account = Some(acc);
+                    break;
+                }
+                None => {
+                    println!("Account not found, retrying...");
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+
+        account.unwrap_or_else(|| panic!("Failed to get token account after multiple retries"))
     };
-    token_account
+    TokenAccountFixture {
+        test_ctx: test_ctx_ref,
+        address: token_account_address,
+        account: spl_token::state::Account::unpack(&token_account.data).unwrap(),
+    }
 }
 
 /// Reads a keypair from a JSON fixture file
@@ -160,7 +174,6 @@ fn read_account_from_file(
 
     // Extract the address value
     let address: Pubkey = solana_sdk::pubkey::Pubkey::from_str(json["pubkey"].as_str().expect("pubkey field not found or invalid")).expect("Pubkey field in file is not a valid pubkey");
-
     // Extract the owner address value
     let owner: Pubkey = solana_sdk::pubkey::Pubkey::from_str(json["account"]["owner"].as_str().expect("owner field not found or invalid")).expect("Owner field in file is not a valid pubkey");
     

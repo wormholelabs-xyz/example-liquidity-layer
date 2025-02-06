@@ -1,12 +1,12 @@
-use solana_program_test::{ProgramTest, tokio};
+use solana_program_test::{ProgramTest, ProgramTestContext, tokio};
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction
 };
-use std::rc::Rc;
+use std::{rc::Rc, u64};
 use std::cell::RefCell;
 
 use solana_program::{bpf_loader_upgradeable, system_program};
-use anchor_spl::associated_token::spl_associated_token_account;
+use anchor_spl::{associated_token::spl_associated_token_account, token::spl_token};
 use anchor_lang::AccountDeserialize;
 
 use anchor_lang::{InstructionData, ToAccountMetas};
@@ -23,23 +23,28 @@ use matching_engine::{
 mod utils;
 
 use utils::token_account::{add_account_from_file, create_token_account, read_keypair_from_file};
+use utils::mint::MintFixture;
+use utils::upgrade_manager::initialise_upgrade_manager;
+use utils::airdrop::airdrop;
 
 // Configures the program ID and CCTP mint recipient based on the environment
 cfg_if::cfg_if! {
     if #[cfg(feature = "mainnet")] {
         const PROGRAM_ID : Pubkey = solana_sdk::pubkey!("5BsCKkzuZXLygduw6RorCqEB61AdzNkxp5VzQrFGzYWr");
         const CCTP_MINT_RECIPIENT: Pubkey = solana_sdk::pubkey!("HUXc7MBf55vWrrkevVbmJN8HAyfFtjLcPLBt9yWngKzm");
+        const USDC_MINT_ADDRESS: Pubkey = solana_sdk::pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+        const USDC_MINT_FIXTURE_PATH: &str = "tests/fixtures/usdc_mint.json";
     } else if #[cfg(feature = "testnet")] {
         const PROGRAM_ID : Pubkey = solana_sdk::pubkey!("mPydpGUWxzERTNpyvTKdvS7v8kvw5sgwfiP8WQFrXVS");
         const CCTP_MINT_RECIPIENT: Pubkey = solana_sdk::pubkey!("6yKmqWarCry3c8ntYKzM4WiS2fVypxLbENE2fP8onJje");
+        const USDC_MINT_ADDRESS: Pubkey = solana_sdk::pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+        const USDC_MINT_FIXTURE_PATH: &str = "tests/fixtures/usdc_mint_devnet.json";
     } else if #[cfg(feature = "localnet")] {
         const PROGRAM_ID : Pubkey = solana_sdk::pubkey!("MatchingEngine11111111111111111111111111111");
         const CCTP_MINT_RECIPIENT: Pubkey = solana_sdk::pubkey!("35iwWKi7ebFyXNaqpswd1g9e9jrjvqWPV39nCQPaBbX1");
     }
 }
-const USDC_MINT_ADDRESS: Pubkey = solana_sdk::pubkey!("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 const OWNER_KEYPAIR_PATH: &str = "tests/keys/pFCBP4bhqdSsrWUVTgqhPsLrfEdChBK17vgFM7TxjxQ.json";
-const USDC_MINT_FIXTURE_PATH: &str = "tests/fixtures/usdc_mint.json";
 
 // TODO: When modularising, impl function for the struct to add new solvers
 
@@ -51,20 +56,30 @@ pub async fn test_initialize_program() {
         PROGRAM_ID,
         None,
     );
-
-    add_account_from_file(&mut program_test, USDC_MINT_FIXTURE_PATH);
-
+    program_test.set_compute_max_units(1000000000);
+    program_test.set_transaction_account_lock_limit(1000);
+    
     // Create necessary keypairs
     let owner = read_keypair_from_file(OWNER_KEYPAIR_PATH);
+
     let owner_assistant = Keypair::new();
     let fee_recipient = Keypair::new();
+
+    let program_data = initialise_upgrade_manager(&mut program_test, &PROGRAM_ID, owner.pubkey());
 
     // Start and get test context
     let test_context = Rc::new(RefCell::new(program_test.start_with_context().await));
 
-    let fee_recipient_token_account = create_token_account(test_context.clone(), &fee_recipient, &owner, &USDC_MINT_ADDRESS).await;
+    // Airdrop to owner and owner assistant
+    airdrop(&test_context, &owner.pubkey(), 9999999999950).await;
+    airdrop(&test_context, &owner_assistant.pubkey(), 100000).await;
+
+    // Create USDC mint
+    let mint_fixture = MintFixture::new_from_file(&test_context, USDC_MINT_FIXTURE_PATH);
+
+    // Create fee recipient token account
+    let fee_recipient_token_account = create_token_account(test_context.clone(), &fee_recipient, &USDC_MINT_ADDRESS).await;
     
-    // TODO: Modularise this into common or somewhere else
     // Derive PDAs
     let (custodian, _custodian_bump) = Pubkey::find_program_address(
         &[Custodian::SEED_PREFIX],
@@ -99,12 +114,6 @@ pub async fn test_initialize_program() {
         },
     };
 
-    // FIXME: This probably does not work
-    let program_data = Pubkey::find_program_address(
-        &[PROGRAM_ID.as_ref()],
-        &bpf_loader_upgradeable::id(),
-    ).0;
-
     // Get account metas
     let accounts = Initialize {
         owner: owner.pubkey(),
@@ -117,10 +126,11 @@ pub async fn test_initialize_program() {
         usdc: matching_engine::accounts::Usdc{mint: USDC_MINT_ADDRESS},
         program_data: program_data,
         upgrade_manager_authority: common::UPGRADE_MANAGER_AUTHORITY,
+        // TODO: Initialise upgrade manager program
         upgrade_manager_program: common::UPGRADE_MANAGER_PROGRAM_ID,
         bpf_loader_upgradeable_program: bpf_loader_upgradeable::id(),
         system_program: system_program::id(),
-        token_program: anchor_spl::token::spl_token::id(),
+        token_program: spl_token::id(),
         associated_token_program: spl_associated_token_account::id(),
     };
 
@@ -134,9 +144,9 @@ pub async fn test_initialize_program() {
     // Create and sign transaction
     let mut transaction = Transaction::new_with_payer(
         &[instruction],
-        Some(&owner.pubkey()),
+        Some(&test_context.borrow().payer.pubkey()),
     );
-    transaction.sign(&[&owner], test_context.borrow().last_blockhash);
+    transaction.sign(&[&test_context.borrow().payer, &owner], test_context.borrow().last_blockhash);
 
     // Process transaction
     test_context.borrow_mut().banks_client.process_transaction(transaction).await.unwrap();
@@ -155,11 +165,3 @@ pub async fn test_initialize_program() {
     // TODO: Add more assertions
 }
 
-// TODO: Use this function in the test
-fn get_program_data() -> Vec<u8> {
-    let state = solana_sdk::bpf_loader_upgradeable::UpgradeableLoaderState::ProgramData {
-        slot: 0,
-        upgrade_authority_address: Some(common::UPGRADE_MANAGER_AUTHORITY),
-    };
-    bincode::serialize(&state).unwrap()
-}
