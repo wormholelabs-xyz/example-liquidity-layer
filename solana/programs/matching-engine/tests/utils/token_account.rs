@@ -1,4 +1,4 @@
-use solana_sdk::{program_pack::Pack, account::AccountSharedData, transaction::Transaction, pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{program_pack::Pack, transaction::Transaction, pubkey::Pubkey, signature::Keypair, signer::Signer};
 use anchor_spl::token::spl_token;
 use anchor_spl::associated_token::spl_associated_token_account;
 use solana_program_test::{ProgramTest, ProgramTestContext};
@@ -37,7 +37,7 @@ pub async fn create_token_account(
 
     // Inspired by https://github.com/mrgnlabs/marginfi-v2/blob/3b7bf0aceb684a762c8552412001c8d355033119/test-utils/src/spl.rs#L56
     let token_account = {
-        let mut ctx = test_ctx.borrow_mut();  // Single mutable borrow
+        let mut ctx = test_ctx.borrow_mut();
         
         // Create instruction using borrowed values
         let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account(
@@ -47,47 +47,22 @@ pub async fn create_token_account(
             &spl_token::id(),       // Token program
         );
 
-        // Create and sign transaction
-        let mut tx = Transaction::new_signed_with_payer(
-            &[create_ata_ix.clone()],
+        // Create and process transaction
+        let tx = Transaction::new_signed_with_payer(
+            &[create_ata_ix],
             Some(&ctx.payer.pubkey()),
             &[&ctx.payer],
             ctx.last_blockhash,
-        );
+        );       
 
-        // Process with retries
-        for _ in 0..5 {
-            match ctx.banks_client.process_transaction(tx.clone()).await {
-                Ok(_) => break,
-                Err(e) => {
-                    println!("Transaction failed: {:?}", e);
-                    ctx.last_blockhash = ctx.banks_client.get_latest_blockhash().await.unwrap();
-                    tx = Transaction::new_signed_with_payer(
-                        &[create_ata_ix.clone()],
-                        Some(&ctx.payer.pubkey()),
-                        &[&ctx.payer],
-                        ctx.last_blockhash,
-                    );
-                }
-            }
-        }
+        ctx.banks_client.process_transaction(tx).await.unwrap();
 
-        // Get account with retries
-        let mut account = None;
-        for _ in 0..5 {
-            match ctx.banks_client.get_account(token_account_address).await.unwrap() {
-                Some(acc) => {
-                    account = Some(acc);
-                    break;
-                }
-                None => {
-                    println!("Account not found, retrying...");
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            }
-        }
-
-        account.unwrap_or_else(|| panic!("Failed to get token account after multiple retries"))
+        // Get the account
+        ctx.banks_client
+            .get_account(token_account_address)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("Failed to get token account"))
     };
     TokenAccountFixture {
         test_ctx: test_ctx_ref,
@@ -117,8 +92,7 @@ pub fn read_keypair_from_file(filename: &str) -> Keypair {
         .expect("Bytes must form a valid keypair")
 }
 
-// TODO: Seperate the function to another file, it is more general than just token account
-
+// FIXME: This does not work, using the function in the mint.rs file instead
 /// Adds an account from a JSON fixture file to the program test
 ///
 /// Loads the JSON file and parses it into a Value object that is used to extract the lamports, address, and owner values.
@@ -127,6 +101,7 @@ pub fn read_keypair_from_file(filename: &str) -> Keypair {
 ///
 /// * `program_test` - The program test instance
 /// * `filename` - The path to the JSON fixture file
+#[allow(dead_code, unused_variables)]
 pub fn add_account_from_file(
     program_test: &mut ProgramTest,
     filename: &str,
@@ -137,13 +112,14 @@ pub fn add_account_from_file(
     program_test.add_account_with_file_data(account_fixture.address, account_fixture.lamports, account_fixture.owner, filename)
 }
 
+#[allow(dead_code, unused_variables)]
 struct AccountFixture {
     pub address: Pubkey,
     pub owner: Pubkey,
     pub lamports: u64,
 }
 
-// TODO: Error handle using anyhow or thiserror
+// FIXME: This code is not being used, remove it
 
 /// Reads an account from a JSON fixture file
 ///

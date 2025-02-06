@@ -3,17 +3,26 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use solana_sdk::{
     pubkey::Pubkey,
-    instruction::AccountMeta,
     system_instruction,
-    signature::{Keypair, Signer},
+    signature::Signer,
 };
 use solana_sdk::transaction::Transaction;
+
+
+/// Airdrops SOL to a given recipient
+///
+/// # Arguments
+///
+/// * `test_context` - The test context
+/// * `recipient` - The recipient of the airdrop        
+/// * `amount` - The amount of SOL to airdrop
 
 pub async fn airdrop(
     test_context: &Rc<RefCell<ProgramTestContext>>,
     recipient: &Pubkey,
     amount: u64,
 ) {
+    println!("Airdropping {:?} with amount {:?}", recipient, amount);
     let mut ctx = test_context.borrow_mut();
     
     // Create the transfer instruction with values from the context
@@ -24,27 +33,12 @@ pub async fn airdrop(
     );
 
     // Create and send transaction
-    let mut tx = Transaction::new_signed_with_payer(
+    let tx = Transaction::new_signed_with_payer(
         &[transfer_ix.clone()],
         Some(&ctx.payer.pubkey()),
         &[&ctx.payer],
         ctx.last_blockhash,
     );
 
-    // Process with retries
-    for _ in 0..5 {
-        match ctx.banks_client.process_transaction(tx.clone()).await {
-            Ok(_) => break,
-            Err(e) => {
-                println!("Airdrop failed: {:?}, retrying...", e);
-                ctx.last_blockhash = ctx.banks_client.get_latest_blockhash().await.unwrap();
-                tx = Transaction::new_signed_with_payer(
-                    &[transfer_ix.clone()],
-                    Some(&ctx.payer.pubkey()),
-                    &[&ctx.payer],
-                    ctx.last_blockhash,
-                );
-            }
-        }
-    }
+    ctx.banks_client.process_transaction(tx).await.unwrap();
 }

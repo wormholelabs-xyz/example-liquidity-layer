@@ -1,8 +1,8 @@
-use solana_program_test::{ProgramTest, ProgramTestContext, tokio};
+use solana_program_test::{ProgramTest, tokio};
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction
 };
-use std::{rc::Rc, u64};
+use std::rc::Rc;
 use std::cell::RefCell;
 
 use solana_program::{bpf_loader_upgradeable, system_program};
@@ -22,7 +22,7 @@ use matching_engine::{
 
 mod utils;
 
-use utils::token_account::{add_account_from_file, create_token_account, read_keypair_from_file};
+use utils::token_account::{create_token_account, read_keypair_from_file};
 use utils::mint::MintFixture;
 use utils::upgrade_manager::initialise_upgrade_manager;
 use utils::airdrop::airdrop;
@@ -72,10 +72,10 @@ pub async fn test_initialize_program() {
 
     // Airdrop to owner and owner assistant
     airdrop(&test_context, &owner.pubkey(), 9999999999950).await;
-    airdrop(&test_context, &owner_assistant.pubkey(), 100000).await;
+    airdrop(&test_context, &owner_assistant.pubkey(), 9999999999950).await;
 
     // Create USDC mint
-    let mint_fixture = MintFixture::new_from_file(&test_context, USDC_MINT_FIXTURE_PATH);
+    let _mint_fixture = MintFixture::new_from_file(&test_context, USDC_MINT_FIXTURE_PATH);
 
     // Create fee recipient token account
     let fee_recipient_token_account = create_token_account(test_context.clone(), &fee_recipient, &USDC_MINT_ADDRESS).await;
