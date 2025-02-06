@@ -21,7 +21,6 @@ use matching_engine::{
 };
 
 mod utils;
-
 use utils::token_account::{create_token_account, read_keypair_from_file};
 use utils::mint::MintFixture;
 use utils::upgrade_manager::initialise_upgrade_manager;
