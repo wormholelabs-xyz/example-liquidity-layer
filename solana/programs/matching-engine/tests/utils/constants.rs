@@ -3,7 +3,7 @@ use solana_sdk::signature::Keypair;
 use std::str::FromStr;
 
 // Program IDs
-pub const CORE_BRIDGE_PID: Pubkey = Pubkey::from_str("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth").unwrap();
+pub const CORE_BRIDGE_PID: Pubkey = solana_program::pubkey!("worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth");
 pub const TOKEN_ROUTER_PID: Pubkey = solana_program::pubkey!("tD8RmtdcV7bzBeuFgyrFc8wvayj988ChccEzRQzo6md");
 
 /// Keypairs as base64 strings (taken from consts.ts in ts tests)
@@ -53,7 +53,7 @@ pub const CHAIN_TO_DOMAIN: &[(Chain, u32)] = &[
 ];
 
 // Enum for Chain types
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Chain {
     Ethereum,
     Avalanche,
@@ -76,4 +76,19 @@ lazy_static::lazy_static! {
         m.insert(Chain::Polygon, vec![0xf7; 32]);
         m
     };
+}
+
+// Chain ID mapping
+impl Chain {
+    pub fn to_chain_id(&self) -> u16 {
+        match self {
+            Chain::Solana => 1,
+            Chain::Ethereum => 2,
+            Chain::Avalanche => 6,
+            Chain::Optimism => 24,
+            Chain::Arbitrum => 23,
+            Chain::Base => 30,
+            Chain::Polygon => 5,
+        }
+    }
 }
