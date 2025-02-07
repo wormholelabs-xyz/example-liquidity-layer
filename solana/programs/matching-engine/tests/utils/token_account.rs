@@ -12,6 +12,12 @@ pub struct TokenAccountFixture {
     pub account: spl_token::state::Account,
 }
 
+impl std::fmt::Debug for TokenAccountFixture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TokenAccountFixture {{ address: {}, account: {:?} }}", self.address, self.account)
+    }
+}
+
 /// Creates a token account for the given owner and mint
 ///
 /// # Arguments
@@ -20,7 +26,6 @@ pub struct TokenAccountFixture {
 /// * `payer` - The payer of the account
 /// * `owner` - The owner of the account
 /// * `mint` - The mint of the account
-#[allow(dead_code, unused_variables)]
 pub async fn create_token_account(
     test_ctx: Rc<RefCell<ProgramTestContext>>,
     owner: &Keypair,

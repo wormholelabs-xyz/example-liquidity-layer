@@ -1,4 +1,4 @@
-use solana_program_test::{ProgramTest, tokio};
+use solana_program_test::{ProgramTest, ProgramTestContext, tokio};
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::{Keypair, Signer}, transaction::Transaction
 };
@@ -21,7 +21,7 @@ use matching_engine::{
 };
 
 mod utils;
-use utils::token_account::{create_token_account, read_keypair_from_file};
+use utils::token_account::{create_token_account, read_keypair_from_file, TokenAccountFixture};
 use utils::mint::MintFixture;
 use utils::upgrade_manager::initialise_upgrade_manager;
 use utils::airdrop::airdrop;
@@ -47,9 +47,121 @@ const OWNER_KEYPAIR_PATH: &str = "tests/keys/pFCBP4bhqdSsrWUVTgqhPsLrfEdChBK17vg
 
 // TODO: When modularising, impl function for the struct to add new solvers
 
-#[tokio::test]
-pub async fn test_initialize_program() {
-    // Create program test context
+pub struct Solver {
+    pub actor: TestingActor,
+    pub endpoint: Option<String>,
+}
+
+impl Solver {
+    pub fn new(keypair: Rc<Keypair>, token_account: Option<TokenAccountFixture>, endpoint: Option<String>) -> Self {
+        Self { actor: TestingActor::new(keypair, token_account), endpoint }
+    }
+
+    pub fn get_endpoint(&self) -> Option<String> {
+        self.endpoint.clone()
+    }   
+    
+    pub fn keypair(&self) -> Rc<Keypair> {
+        self.actor.keypair.clone()
+    }
+
+    pub fn pubkey(&self) -> Pubkey {
+        self.actor.keypair.pubkey()
+    }
+}
+
+pub struct TestingActor {
+    pub keypair: Rc<Keypair>,
+    pub token_account: Option<TokenAccountFixture>,
+}
+
+impl std::fmt::Debug for TestingActor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TestingActor {{ pubkey: {:?}, token_account: {:?} }}", self.keypair.pubkey(), self.token_account)
+    }
+}
+
+impl TestingActor {
+    pub fn new(keypair: Rc<Keypair>, token_account: Option<TokenAccountFixture>) -> Self {
+        Self { keypair, token_account }
+    }
+    pub fn pubkey(&self) -> Pubkey {
+        self.keypair.pubkey()
+    }
+    pub fn keypair(&self) -> Rc<Keypair> {
+        self.keypair.clone()
+    }
+
+    pub fn token_account_address(&self) -> Option<Pubkey> {
+        self.token_account.as_ref().map(|t| t.address)
+    }
+}
+
+pub struct TestingActors {
+    pub owner: TestingActor,
+    pub owner_assistant: TestingActor,
+    pub fee_recipient: TestingActor,
+    pub relayer: TestingActor,
+    pub solvers: Vec<Solver>,
+    pub liquidator: TestingActor,
+}
+
+impl TestingActors {
+    pub fn new() -> Self {
+        let owner_kp = Rc::new(read_keypair_from_file(OWNER_KEYPAIR_PATH));
+        let owner = TestingActor::new(owner_kp.clone(), None);
+        let owner_assistant = TestingActor::new(owner_kp.clone(), None);
+        let fee_recipient = TestingActor::new(Rc::new(Keypair::new()), None);
+        let relayer = TestingActor::new(Rc::new(Keypair::new()), None);
+        // TODO: Change player 1 solver to use the keyfile
+        let mut solvers = vec![];
+        solvers.extend(vec![
+            Solver::new(Rc::new(Keypair::new()), None, None),
+            Solver::new(Rc::new(Keypair::new()), None, None),
+            Solver::new(Rc::new(Keypair::new()), None, None),
+        ]);
+        let liquidator = TestingActor::new(Rc::new(Keypair::new()), None);
+        Self { owner, owner_assistant, fee_recipient, relayer, solvers, liquidator }
+    }
+
+    pub fn token_account_actors(&mut self) -> Vec<&mut TestingActor> {
+        let mut actors = Vec::new();
+        actors.push(&mut self.fee_recipient);
+        for solver in &mut self.solvers {
+            actors.push(&mut solver.actor);
+        }
+        actors.push(&mut self.liquidator);
+        actors
+    }
+
+    /// Transfer Lamports to Executors
+    async fn airdrop_all(&self, test_context: &Rc<RefCell<ProgramTestContext>>) {
+        airdrop(test_context, &self.owner.pubkey(), 10000000000).await;
+        airdrop(test_context, &self.owner_assistant.pubkey(), 10000000000).await;
+        airdrop(test_context, &self.fee_recipient.pubkey(), 10000000000).await;
+        airdrop(test_context, &self.relayer.pubkey(), 10000000000).await;
+        for solver in self.solvers.iter() {
+            airdrop(test_context, &solver.pubkey(), 10000000000).await;
+        }
+        airdrop(test_context, &self.liquidator.pubkey(), 10000000000).await;
+    }
+    
+    /// Set up ATAs for Various Owners
+    async fn create_atas(&mut self, test_context: &Rc<RefCell<ProgramTestContext>>) {
+        for actor in self.token_account_actors() {
+            let usdc_ata = create_token_account(test_context.clone(), &actor.keypair(), &USDC_MINT_ADDRESS).await;
+            actor.token_account = Some(usdc_ata);
+        }
+    }
+}
+
+pub struct TestingContext {
+    pub program_data_account: Pubkey,
+    pub testing_actors: TestingActors,
+    pub test_context: Rc<RefCell<ProgramTestContext>>,
+}
+
+pub async fn setup_test_context() -> TestingContext {
     let mut program_test = ProgramTest::new(
         "matching_engine",  // Replace with your program name
         PROGRAM_ID,
@@ -57,35 +169,41 @@ pub async fn test_initialize_program() {
     );
     program_test.set_compute_max_units(1000000000);
     program_test.set_transaction_account_lock_limit(1000);
-    
-    // Create necessary keypairs
-    let owner = read_keypair_from_file(OWNER_KEYPAIR_PATH);
 
-    let owner_assistant = Keypair::new();
-    let fee_recipient = Keypair::new();
+    // Setup Testing Actors
+    let mut testing_actors = TestingActors::new();
 
-    let program_data = initialise_upgrade_manager(&mut program_test, &PROGRAM_ID, owner.pubkey());
+    // Initialise Upgrade Manager
+    let program_data = initialise_upgrade_manager(&mut program_test, &PROGRAM_ID, testing_actors.owner.pubkey());
 
     // Start and get test context
     let test_context = Rc::new(RefCell::new(program_test.start_with_context().await));
-
-    // Airdrop to owner and owner assistant
-    airdrop(&test_context, &owner.pubkey(), 9999999999950).await;
-    airdrop(&test_context, &owner_assistant.pubkey(), 9999999999950).await;
+    
+    // Airdrop to all actors
+    testing_actors.airdrop_all(&test_context).await;
 
     // Create USDC mint
     let _mint_fixture = MintFixture::new_from_file(&test_context, USDC_MINT_FIXTURE_PATH);
 
-    // Create fee recipient token account
-    let fee_recipient_token_account = create_token_account(test_context.clone(), &fee_recipient, &USDC_MINT_ADDRESS).await;
+    // Create USDC ATAs for all actors that need them
+    testing_actors.create_atas(&test_context).await;
+
+    TestingContext { program_data_account: program_data, testing_actors, test_context }
+}
+
+pub struct InitializeFixture {
+    pub test_context: Rc<RefCell<ProgramTestContext>>,
+    pub custodian: Custodian,
+}
+
+async fn initialize_program(testing_context: &TestingContext) -> InitializeFixture {
+    let test_context = testing_context.test_context.clone();
     
-    // Derive PDAs
     let (custodian, _custodian_bump) = Pubkey::find_program_address(
         &[Custodian::SEED_PREFIX],
         &PROGRAM_ID,
     );
 
-    // TODO: Modularise this into common or somewhere else
     let (auction_config, _auction_config_bump) = Pubkey::find_program_address(
         &[
             AuctionConfig::SEED_PREFIX,
@@ -93,7 +211,7 @@ pub async fn test_initialize_program() {
         ],
         &PROGRAM_ID,
     );
-
+    
     // Create AuctionParameters
     let auction_params = matching_engine::state::AuctionParameters {
         user_penalty_reward_bps: 250_000, // 25%
@@ -105,34 +223,33 @@ pub async fn test_initialize_program() {
         security_deposit_base: 4_200_000,
         security_deposit_bps: 5_000, // 0.5%
     };
-    
+
     // Create the instruction data
     let ix_data = matching_engine::instruction::Initialize {
         args: InitializeArgs {
             auction_params,
         },
     };
-
+    
     // Get account metas
     let accounts = Initialize {
-        owner: owner.pubkey(),
+        owner: testing_context.testing_actors.owner.pubkey(),
         custodian,
         auction_config,
-        owner_assistant: owner_assistant.pubkey(),
-        fee_recipient: fee_recipient.pubkey(),
-        fee_recipient_token: fee_recipient_token_account.address,
+        owner_assistant: testing_context.testing_actors.owner_assistant.pubkey(),
+        fee_recipient: testing_context.testing_actors.fee_recipient.pubkey(),
+        fee_recipient_token: testing_context.testing_actors.fee_recipient.token_account_address().unwrap(),
         cctp_mint_recipient: CCTP_MINT_RECIPIENT,
         usdc: matching_engine::accounts::Usdc{mint: USDC_MINT_ADDRESS},
-        program_data: program_data,
+        program_data: testing_context.program_data_account,
         upgrade_manager_authority: common::UPGRADE_MANAGER_AUTHORITY,
-        // TODO: Initialise upgrade manager program
         upgrade_manager_program: common::UPGRADE_MANAGER_PROGRAM_ID,
         bpf_loader_upgradeable_program: bpf_loader_upgradeable::id(),
         system_program: system_program::id(),
         token_program: spl_token::id(),
         associated_token_program: spl_associated_token_account::id(),
     };
-
+    
     // Create the instruction
     let instruction = Instruction {
         program_id: PROGRAM_ID,
@@ -145,7 +262,7 @@ pub async fn test_initialize_program() {
         &[instruction],
         Some(&test_context.borrow().payer.pubkey()),
     );
-    transaction.sign(&[&test_context.borrow().payer, &owner], test_context.borrow().last_blockhash);
+    transaction.sign(&[&test_context.borrow().payer, &testing_context.testing_actors.owner.keypair()], test_context.borrow().last_blockhash);
 
     // Process transaction
     test_context.borrow_mut().banks_client.process_transaction(transaction).await.unwrap();
@@ -158,9 +275,28 @@ pub async fn test_initialize_program() {
         .unwrap();
     
     let custodian_data = Custodian::try_deserialize(&mut custodian_account.data.as_slice()).unwrap();
+
+    InitializeFixture { test_context, custodian: custodian_data }
+}
     
-    assert_eq!(custodian_data.owner, owner.pubkey());
-    assert_eq!(custodian_data.owner_assistant, owner_assistant.pubkey());
-    // TODO: Add more assertions
+#[tokio::test]
+pub async fn test_initialize_program() {
+    
+    let testing_context = setup_test_context().await;
+    
+    let initialize_fixture = initialize_program(&testing_context).await;
+    
+    let custodian_data = initialize_fixture.custodian;
+
+    // Verify owner is correct
+    assert_eq!(custodian_data.owner, testing_context.testing_actors.owner.pubkey());
+    // Verify owner assistant is correct
+    assert_eq!(custodian_data.owner_assistant, testing_context.testing_actors.owner_assistant.pubkey());
+    // Verify fee recipient token is correct
+    assert_eq!(custodian_data.fee_recipient_token, testing_context.testing_actors.fee_recipient.token_account.unwrap().address);
+    // Verify auction config id is 0
+    assert_eq!(custodian_data.auction_config_id, 0);
+    // Verify next proposal id is 0
+    assert_eq!(custodian_data.next_proposal_id, 0);
 }
 
