@@ -6,12 +6,13 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 mod utils;
-use utils::token_account::{create_token_account, read_keypair_from_file, TokenAccountFixture};
+use utils::{router::add_local_router_endpoint_ix, token_account::{create_token_account, read_keypair_from_file, TokenAccountFixture}, Chain};
 use utils::mint::MintFixture;
-use utils::upgrade_manager::initialise_upgrade_manager;
+use utils::program_fixtures::{initialise_upgrade_manager, initialise_cctp_token_messenger_minter, initialise_wormhole_core_bridge, initialise_cctp_message_transmitter, initialise_local_token_router};
 use utils::airdrop::airdrop;
 use utils::initialize::initialize_program;
 use utils::account_fixtures::FixtureAccounts;
+use utils::router::add_cctp_router_endpoint_ix;
 
 // Configures the program ID and CCTP mint recipient based on the environment
 cfg_if::cfg_if! {
@@ -146,6 +147,7 @@ pub struct TestingContext {
     pub program_data_account: Pubkey, // Move this into something smarter
     pub testing_actors: TestingActors,
     pub test_context: Rc<RefCell<ProgramTestContext>>,
+    pub fixture_accounts: Option<FixtureAccounts>,
 }
 
 pub async fn setup_test_context() -> TestingContext {
@@ -162,11 +164,16 @@ pub async fn setup_test_context() -> TestingContext {
 
     // Initialise Upgrade Manager
     let program_data = initialise_upgrade_manager(&mut program_test, &PROGRAM_ID, testing_actors.owner.pubkey());
+    initialise_cctp_token_messenger_minter(&mut program_test, testing_actors.owner.pubkey());
+    initialise_wormhole_core_bridge(&mut program_test, testing_actors.owner.pubkey());
+    initialise_cctp_message_transmitter(&mut program_test, testing_actors.owner.pubkey());
+    initialise_local_token_router(&mut program_test, testing_actors.owner.pubkey());
 
     // Initialise Account Fixtures
-    // let _account_fixtures = FixtureAccounts::new(&mut program_test);
+    let account_fixtures = FixtureAccounts::new(&mut program_test);
 
-    // TODO: Create lookup table accounts and add them to the testing context, using _account_fixtures as argument
+    // Add lookup table accounts
+    FixtureAccounts::add_lookup_table_hack(&mut program_test);
 
     // Start and get test context
     let test_context = Rc::new(RefCell::new(program_test.start_with_context().await));
@@ -180,7 +187,7 @@ pub async fn setup_test_context() -> TestingContext {
     // Create USDC ATAs for all actors that need them
     testing_actors.create_atas(&test_context).await;
 
-    TestingContext { program_data_account: program_data, testing_actors, test_context }
+    TestingContext { program_data_account: program_data, testing_actors, test_context, fixture_accounts: Some(account_fixtures) }
 }
 
     
@@ -190,20 +197,73 @@ pub async fn test_initialize_program() {
     let testing_context = setup_test_context().await;
     
     let initialize_fixture = initialize_program(&testing_context, PROGRAM_ID, USDC_MINT_ADDRESS, CCTP_MINT_RECIPIENT).await;
-    
-    let custodian_data = initialize_fixture.custodian;
 
-    // Verify owner is correct
-    assert_eq!(custodian_data.owner, testing_context.testing_actors.owner.pubkey());
-    // Verify owner assistant is correct
-    assert_eq!(custodian_data.owner_assistant, testing_context.testing_actors.owner_assistant.pubkey());
-    // Verify fee recipient token is correct
-    assert_eq!(custodian_data.fee_recipient_token, testing_context.testing_actors.fee_recipient.token_account.unwrap().address);
-    // Verify auction config id is 0
-    assert_eq!(custodian_data.auction_config_id, 0);
-    // Verify next proposal id is 0
-    assert_eq!(custodian_data.next_proposal_id, 0);
-
-    // TODO: Check that account data is correct, which will require some partial eq on some account structs and compare them to the deserialised account data
+    // Check that custodian data corresponds to the expected values
+    initialize_fixture.verify_custodian(testing_context.testing_actors.owner.pubkey(), testing_context.testing_actors.owner_assistant.pubkey(), testing_context.testing_actors.fee_recipient.pubkey(), testing_context.testing_actors.fee_recipient.token_account.unwrap().address);
 }
 
+
+#[tokio::test]
+pub async fn test_cctp_token_router_endpoint_creation() {
+    let testing_context = setup_test_context().await;
+
+    let initialize_fixture = initialize_program(&testing_context, PROGRAM_ID, USDC_MINT_ADDRESS, CCTP_MINT_RECIPIENT).await;
+
+    // Create a token router endpoint for the arbitrum chain
+    let arb_chain = Chain::Arbitrum;
+    
+    let fixture_accounts = testing_context.fixture_accounts.expect("Pre-made fixture accounts not found");
+    let arb_remote_token_messenger = fixture_accounts.arbitrum_remote_token_messenger;
+
+    let usdc_mint_address = USDC_MINT_ADDRESS;
+    
+    let arbitrum_token_router_endpoint = add_cctp_router_endpoint_ix(
+        &testing_context.test_context,
+        testing_context.testing_actors.owner.pubkey(),
+        initialize_fixture.custodian_address,
+        testing_context.testing_actors.owner.keypair().as_ref(),
+        PROGRAM_ID,
+        arb_remote_token_messenger,
+        usdc_mint_address,
+        arb_chain,
+    ).await;
+    assert_eq!(arbitrum_token_router_endpoint.info.chain, arb_chain.to_chain_id());
+
+    // Create a token router endpoint for the ethereum chain
+    let eth_chain = Chain::Ethereum;
+    let eth_remote_token_messenger = fixture_accounts.ethereum_remote_token_messenger;
+
+    let eth_token_router_endpoint = add_cctp_router_endpoint_ix(
+        &testing_context.test_context,
+        testing_context.testing_actors.owner.pubkey(),
+        initialize_fixture.custodian_address,
+        testing_context.testing_actors.owner.keypair().as_ref(),
+        PROGRAM_ID,
+        eth_remote_token_messenger,
+        usdc_mint_address,
+        eth_chain,
+    ).await;
+    assert_eq!(eth_token_router_endpoint.info.chain, eth_chain.to_chain_id());
+}
+
+#[tokio::test]
+pub async fn test_local_token_router_endpoint_creation() {
+    let testing_context = setup_test_context().await;
+
+    let initialize_fixture = initialize_program(&testing_context, PROGRAM_ID, USDC_MINT_ADDRESS, CCTP_MINT_RECIPIENT).await;
+    let fixture_accounts = testing_context.fixture_accounts.expect("Pre-made fixture accounts not found");
+    let local_custody_token = fixture_accounts.usdc_local_token;
+
+    let usdc_mint_address = USDC_MINT_ADDRESS;
+
+    let local_token_router_endpoint = add_local_router_endpoint_ix(
+        &testing_context.test_context,
+        testing_context.testing_actors.owner.pubkey(),
+        initialize_fixture.custodian_address,
+        testing_context.testing_actors.owner.keypair().as_ref(),
+        PROGRAM_ID,
+        &usdc_mint_address,
+    ).await;
+
+    assert_eq!(local_token_router_endpoint.info.chain, Chain::Solana.to_chain_id());
+}

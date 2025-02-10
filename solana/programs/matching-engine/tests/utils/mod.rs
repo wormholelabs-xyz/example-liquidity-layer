@@ -3,7 +3,7 @@
 
 pub mod token_account;
 pub mod mint;
-pub mod upgrade_manager;
+pub mod program_fixtures;
 pub mod airdrop;
 pub mod constants;
 // pub mod lookup_table;

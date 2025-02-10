@@ -24,6 +24,52 @@ use super::super::TestingContext;
 pub struct InitializeFixture {
     pub test_context: Rc<RefCell<ProgramTestContext>>,
     pub custodian: Custodian,
+    pub custodian_address: Pubkey,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TestCustodian {
+    owner: Pubkey,
+    pending_owner: Option<Pubkey>,
+    paused: bool,
+    paused_set_by: Pubkey,
+    owner_assistant: Pubkey,
+    fee_recipient_token: Pubkey,
+    auction_config_id: u32,
+    next_proposal_id: u64,
+}
+
+impl From<&Custodian> for TestCustodian {
+    fn from(c: &Custodian) -> Self {
+        Self {
+            owner: c.owner,
+            pending_owner: c.pending_owner,
+            paused: c.paused,
+            paused_set_by: c.paused_set_by,
+            owner_assistant: c.owner_assistant,
+            fee_recipient_token: c.fee_recipient_token,
+            auction_config_id: c.auction_config_id,
+            next_proposal_id: c.next_proposal_id,
+        }
+    }
+}
+
+impl InitializeFixture {
+    pub fn verify_custodian(&self, owner: Pubkey, owner_assistant: Pubkey, fee_recipient: Pubkey, fee_recipient_token: Pubkey) {
+        let expected_custodian = TestCustodian {
+            owner,
+            pending_owner: None,
+            paused: false,
+            paused_set_by: owner,
+            owner_assistant,
+            fee_recipient_token,
+            auction_config_id: 0,
+            next_proposal_id: 0,
+        };
+
+        let actual_custodian = TestCustodian::from(&self.custodian);
+        assert_eq!(actual_custodian, expected_custodian);
+    }
 }
 
 pub async fn initialize_program(testing_context: &TestingContext, program_id: Pubkey, usdc_mint_address: Pubkey, cctp_mint_recipient: Pubkey) -> InitializeFixture {
@@ -99,12 +145,12 @@ pub async fn initialize_program(testing_context: &TestingContext, program_id: Pu
 
     // Verify the results
     let custodian_account = test_context.borrow_mut().banks_client
-        .get_account(custodian)
+        .get_account(custodian.clone())
         .await
         .unwrap()
         .unwrap();
     
     let custodian_data = Custodian::try_deserialize(&mut custodian_account.data.as_slice()).unwrap();
     
-    InitializeFixture { test_context, custodian: custodian_data }
+    InitializeFixture { test_context, custodian: custodian_data, custodian_address: custodian }
 }

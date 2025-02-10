@@ -75,6 +75,37 @@ pub async fn create_token_account(
     }
 }
 
+pub async fn create_token_account_for_pda(
+    test_context: &Rc<RefCell<ProgramTestContext>>,
+    pda: &Pubkey,  // The PDA that will own the token account
+    mint: &Pubkey, // The mint (USDC in your case)
+) -> Pubkey {
+    let mut ctx = test_context.borrow_mut();
+    
+    // Get the ATA address
+    let ata = anchor_spl::associated_token::get_associated_token_address(&pda, mint);
+    
+    // Create the create_ata instruction
+    let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account(
+        &ctx.payer.pubkey(),    // Funding account
+        pda,                    // Account that will own the token account
+        mint,                   // Token mint (USDC)
+        &spl_token::id(),       // Token program
+    );
+
+    // Create and send transaction
+    let transaction = Transaction::new_signed_with_payer(
+        &[create_ata_ix],
+        Some(&ctx.payer.pubkey()),
+        &[&ctx.payer],
+        ctx.last_blockhash,
+    );
+
+    ctx.banks_client.process_transaction(transaction).await.unwrap();
+
+    ata
+}
+
 /// Reads a keypair from a JSON fixture file
 ///
 /// Reads the JSON file and parses it into a Value object that is used to extract the keypair.
