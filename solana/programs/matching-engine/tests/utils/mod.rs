@@ -11,5 +11,6 @@ pub mod constants;
 pub mod account_fixtures;
 pub mod initialize;
 pub mod router;
-
+pub mod vaa;
+pub mod auction;
 pub use constants::*;

@@ -55,7 +55,7 @@ impl From<&Custodian> for TestCustodian {
 }
 
 impl InitializeFixture {
-    pub fn verify_custodian(&self, owner: Pubkey, owner_assistant: Pubkey, fee_recipient: Pubkey, fee_recipient_token: Pubkey) {
+    pub fn verify_custodian(&self, owner: Pubkey, owner_assistant: Pubkey, fee_recipient_token: Pubkey) {
         let expected_custodian = TestCustodian {
             owner,
             pending_owner: None,

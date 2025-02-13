@@ -3,15 +3,15 @@
 use anchor_lang::prelude::*;
 use anchor_lang::Discriminator;
 use anchor_lang::{InstructionData, ToAccountMetas};
-use anchor_spl::associated_token::spl_associated_token_account;
 use common::wormhole_cctp_solana::cctp::token_messenger_minter_program::RemoteTokenMessenger;
 use matching_engine::state::Custodian;
+use matching_engine::state::EndpointInfo;
 use matching_engine::LOCAL_CUSTODY_TOKEN_SEED_PREFIX;
 use solana_program_test::ProgramTestContext;
 use std::rc::Rc;
 use std::cell::RefCell;
 use matching_engine::instruction::{AddCctpRouterEndpoint, AddLocalRouterEndpoint};
-use matching_engine::accounts::{AddCctpRouterEndpoint as AddCctpRouterEndpointAccounts, AddLocalRouterEndpoint as AddLocalRouterEndpointAccounts, Admin, CheckedCustodian, LocalTokenRouter, Usdc};
+use matching_engine::accounts::{AddCctpRouterEndpoint as AddCctpRouterEndpointAccounts, AddLocalRouterEndpoint as AddLocalRouterEndpointAccounts, Admin, CheckedCustodian, LocalTokenRouter};
 use matching_engine::AddCctpRouterEndpointArgs;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::signature::{Signer, Keypair};
@@ -28,6 +28,7 @@ fn generate_admin(owner_or_assistant: Pubkey, custodian: Pubkey) -> Admin {
     }
 }
 
+#[allow(dead_code)]
 async fn print_account_discriminator(
     test_context: &Rc<RefCell<ProgramTestContext>>,
     address: &Pubkey,
@@ -55,6 +56,51 @@ async fn print_account_discriminator(
     
 }
 
+/// A struct representing an endpoint info for testing purposes
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TestEndpointInfo {
+    pub chain: u16,
+    pub address: [u8; 32],
+    pub mint_recipient: [u8; 32],
+    pub protocol: matching_engine::state::MessageProtocol,
+}
+
+impl From<&EndpointInfo> for TestEndpointInfo {
+    fn from(endpoint_info: &EndpointInfo) -> Self {
+        Self { chain: endpoint_info.chain, address: endpoint_info.address, mint_recipient: endpoint_info.mint_recipient, protocol: endpoint_info.protocol }
+    }
+}
+
+impl TestEndpointInfo {
+    pub fn new(chain: Chain, address: &Pubkey, mint_recipient: Option<&Pubkey>, protocol: matching_engine::state::MessageProtocol) -> Self {
+        if let Some(mint_recipient) = mint_recipient {
+            Self { chain: chain.to_chain_id(), address: address.to_bytes(), mint_recipient: mint_recipient.to_bytes(), protocol: protocol }
+        } else {
+            Self { chain: chain.to_chain_id(), address: address.to_bytes(), mint_recipient: address.to_bytes(), protocol: protocol }
+        }
+    }
+}
+
+/// A struct representing a router endpoint for testing purposes
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TestRouterEndpoint {
+    pub bump: u8,
+    pub info: TestEndpointInfo,
+}
+
+impl From<&RouterEndpoint> for TestRouterEndpoint {
+    fn from(router_endpoint: &RouterEndpoint) -> Self {
+        Self { bump: router_endpoint.bump, info: (&router_endpoint.info).into() }
+    }
+}
+
+impl TestRouterEndpoint {
+    pub fn verify_endpoint_info(&self, chain: Chain, address: &Pubkey, mint_recipient: Option<&Pubkey>, protocol: matching_engine::state::MessageProtocol) {
+        let expected_info = TestEndpointInfo::new(chain, address, mint_recipient, protocol);
+        assert_eq!(self.info, expected_info);
+    }
+}
+
 pub async fn add_cctp_router_endpoint_ix(
     test_context: &Rc<RefCell<ProgramTestContext>>,
     admin_owner_or_assistant: Pubkey,
@@ -64,7 +110,7 @@ pub async fn add_cctp_router_endpoint_ix(
     remote_token_messenger: Pubkey,
     usdc_mint_address: Pubkey,
     chain: Chain,
-) -> RouterEndpoint {
+) -> TestRouterEndpoint {
     let admin = generate_admin(admin_owner_or_assistant, admin_custodian);
     let usdc = matching_engine::accounts::Usdc{mint: usdc_mint_address};
     
@@ -72,8 +118,6 @@ pub async fn add_cctp_router_endpoint_ix(
     let encoded_chain = (chain.to_chain_id() as u16).to_be_bytes();
     let (router_endpoint_address, _bump) = Pubkey::find_program_address(&[RouterEndpoint::SEED_PREFIX, &encoded_chain], &program_id);
     
-    // Print the discriminator of the remote token messenger
-    print_account_discriminator(&test_context, &remote_token_messenger).await;
     
     let local_custody_token_address = Pubkey::find_program_address(&[LOCAL_CUSTODY_TOKEN_SEED_PREFIX, &encoded_chain], &program_id).0;
     
@@ -121,7 +165,9 @@ pub async fn add_cctp_router_endpoint_ix(
 
     let endpoint_data = RouterEndpoint::try_deserialize(&mut endpoint_account.data.as_slice()).unwrap();
 
-    endpoint_data
+    let test_router_endpoint = TestRouterEndpoint::from(&endpoint_data);
+    test_router_endpoint.verify_endpoint_info(chain, &Pubkey::new_from_array(registered_token_router_address), None, matching_engine::state::MessageProtocol::Cctp { domain: CHAIN_TO_DOMAIN[chain as usize].1 });
+    test_router_endpoint
 }
 
 pub async fn add_local_router_endpoint_ix(
@@ -131,7 +177,7 @@ pub async fn add_local_router_endpoint_ix(
     admin_keypair: &Keypair,
     program_id: Pubkey,
     usdc_mint_address: &Pubkey,
-) -> RouterEndpoint {
+) -> TestRouterEndpoint {
     let admin = generate_admin(admin_owner_or_assistant, admin_custodian);
     
     let token_router_program = TOKEN_ROUTER_PID;
@@ -140,7 +186,7 @@ pub async fn add_local_router_endpoint_ix(
     // Create the local token router
     let local_token_router = LocalTokenRouter {
         token_router_program,
-        token_router_emitter,
+        token_router_emitter: token_router_emitter.clone(),
         token_router_mint_recipient,
     };
     let chain = Chain::Solana;
@@ -180,5 +226,7 @@ pub async fn add_local_router_endpoint_ix(
 
     let endpoint_data = RouterEndpoint::try_deserialize(&mut endpoint_account.data.as_slice()).unwrap();
 
-    endpoint_data
+    let test_router_endpoint = TestRouterEndpoint::from(&endpoint_data);
+    test_router_endpoint.verify_endpoint_info(chain, &token_router_emitter, Some(&token_router_mint_recipient), matching_engine::state::MessageProtocol::Local { program_id: token_router_program });
+    test_router_endpoint
 }
