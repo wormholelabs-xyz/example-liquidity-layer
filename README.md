@@ -26,14 +26,13 @@ nvm use 20.18.2
 
 Install [Foundry tools](https://book.getfoundry.sh/getting-started/installation), which include `forge`, `anvil` and `cast` CLI tools.
 
-Before using the typescript SDK, build the evm types by running `npm run build` *inside* the `evm` directory. Without this step, the typescript SDK will not be able to be interpreted by the typescript compiler.
+Before using the typescript SDK, build the evm types by running `make build` _inside_ the `evm` directory. Without this step, the typescript SDK will not be able to be interpreted by the typescript compiler.
 
 ## Build, Test and Deploy Smart Contracts
 
 Each directory represents Wormhole integrations for specific blockchain networks. Please navigate to a network subdirectory to see more details (see the relevant README.md) on building, testing and deploying the smart contracts.
 
 [Wormhole Circle Integration]: https://github.com/wormhole-foundation/wormhole-circle-integration/blob/main/DESIGN.md
-
 
 ### Typescript SDK
 
@@ -61,4 +60,3 @@ import {
 import { PreparedOrder } from "@wormhole-foundation/example-liquidity-layer-solana/tokenRouter/state";
 // ...
 ```
-
