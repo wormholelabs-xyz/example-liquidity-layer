@@ -42,6 +42,7 @@
     "@wormhole-foundation/sdk-evm": "^0.10.9",
     "@wormhole-foundation/sdk-solana": "^0.10.9",
     "@wormhole-foundation/sdk-solana-core": "^0.10.9",
+    "@wormhole-foundation/sdk-sui": "^0.10.9",
     "anchor-0.29.0": "npm:@coral-xyz/anchor@^0.29.0",
     "bn.js": "^5.2.1",
     "dotenv": "^16.4.1",

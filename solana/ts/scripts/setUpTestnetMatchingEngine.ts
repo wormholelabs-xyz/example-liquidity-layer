@@ -12,6 +12,7 @@ import { AuctionParameters, MatchingEngineProgram } from "../src/matchingEngine"
 import { TokenRouterProgram } from "../src/tokenRouter";
 import { Chain, toChainId } from "@wormhole-foundation/sdk-base";
 import { toUniversal } from "@wormhole-foundation/sdk-definitions";
+import "@wormhole-foundation/sdk-evm/address";
 
 const MATCHING_ENGINE_ID = "mPydpGUWxzERTNpyvTKdvS7v8kvw5sgwfiP8WQFrXVS";
 const TOKEN_ROUTER_ID = "tD8RmtdcV7bzBeuFgyrFc8wvayj988ChccEzRQzo6md";
@@ -44,20 +45,113 @@ async function main() {
     const payer = Keypair.fromSecretKey(Buffer.from(process.env.SOLANA_PRIVATE_KEY, "base64"));
 
     // Set up program.
-    await intialize(matchingEngine, payer);
+    // await intialize(matchingEngine, payer);
 
     // Add endpoints.
     //
     // CCTP Domains listed here: https://developers.circle.com/stablecoins/docs/supported-domains.
+    // {
+    //     // https://explorer.solana.com/address/tD8RmtdcV7bzBeuFgyrFc8wvayj988ChccEzRQzo6md?cluster=devnet
+    //     await addLocalRouterEndpoint(matchingEngine, payer, tokenRouter);
+    // }
+    // {
+    //     // https://sepolia.etherscan.io/address/0xE57D917bf955FedE2888AAbD056202a6497F1882
+    //     const foreignChain = "Sepolia";
+    //     const foreignEmitter = "0xE57D917bf955FedE2888AAbD056202a6497F1882";
+    //     const cctpDomain = 0;
+
+    //     await addCctpRouterEndpoint(
+    //         matchingEngine,
+    //         payer,
+    //         foreignChain,
+    //         cctpDomain,
+    //         foreignEmitter,
+    //         null,
+    //     );
+    // }
+    // {
+    //     // https://testnet.snowtrace.io/address/0x8Cd7D7C980cd72eBD16737dC3fa04469dcFcf07A
+    //     const foreignChain = "Avalanche";
+    //     const foreignEmitter = "0x8Cd7D7C980cd72eBD16737dC3fa04469dcFcf07A";
+    //     const cctpDomain = 1;
+
+    //     await addCctpRouterEndpoint(
+    //         matchingEngine,
+    //         payer,
+    //         foreignChain,
+    //         cctpDomain,
+    //         foreignEmitter,
+    //         null,
+    //     );
+    // }
+    // {
+    //     // https://sepolia-optimism.etherscan.io/address/0x6BAa7397c18abe6221b4f6C3Ac91C88a9faE00D8
+    //     const foreignChain = "OptimismSepolia";
+    //     const foreignEmitter = "0x6BAa7397c18abe6221b4f6C3Ac91C88a9faE00D8";
+    //     const cctpDomain = 2;
+
+    //     await addCctpRouterEndpoint(
+    //         matchingEngine,
+    //         payer,
+    //         foreignChain,
+    //         cctpDomain,
+    //         foreignEmitter,
+    //         null,
+    //     );
+    // }
+    // {
+    //     // https://sepolia.arbiscan.io/address/0xe0418C44F06B0b0D7D1706E01706316DBB0B210E
+    //     const foreignChain = "ArbitrumSepolia";
+    //     const foreignEmitter = "0xe0418C44F06B0b0D7D1706E01706316DBB0B210E";
+    //     const cctpDomain = 3;
+
+    //     await addCctpRouterEndpoint(
+    //         matchingEngine,
+    //         payer,
+    //         foreignChain,
+    //         cctpDomain,
+    //         foreignEmitter,
+    //         null,
+    //     );
+    // }
+    // {
+    //     // https://sepolia.basescan.org/address/0x824Ea687CD1CC2f2446235D33Ae764CbCd08e18C
+    //     const foreignChain = "BaseSepolia";
+    //     const foreignEmitter = "0x824Ea687CD1CC2f2446235D33Ae764CbCd08e18C";
+    //     const cctpDomain = 6;
+
+    //     await addCctpRouterEndpoint(
+    //         matchingEngine,
+    //         payer,
+    //         foreignChain,
+    //         cctpDomain,
+    //         foreignEmitter,
+    //         null,
+    //     );
+    // }
+    // {
+    //     // https://mumbai.polygonscan.com/address/0xa098368AaaDc0FdF3e309cda710D7A5f8BDEeCD9
+    //     const foreignChain = "PolygonSepolia";
+    //     const foreignEmitter = "0xa098368AaaDc0FdF3e309cda710D7A5f8BDEeCD9";
+    //     const cctpDomain = 7;
+
+    //     await addCctpRouterEndpoint(
+    //         matchingEngine,
+    //         payer,
+    //         foreignChain,
+    //         cctpDomain,
+    //         foreignEmitter,
+    //         null,
+    //     );
+    // }
     {
-        // https://explorer.solana.com/address/tD8RmtdcV7bzBeuFgyrFc8wvayj988ChccEzRQzo6md?cluster=devnet
-        await addLocalRouterEndpoint(matchingEngine, payer, tokenRouter);
-    }
-    {
-        // https://sepolia.etherscan.io/address/0xE57D917bf955FedE2888AAbD056202a6497F1882
-        const foreignChain = "Sepolia";
-        const foreignEmitter = "0xE57D917bf955FedE2888AAbD056202a6497F1882";
-        const cctpDomain = 0;
+        // https://suiscan.xyz/testnet/object/0x453d2114dd4caaadf02b0bb79eaf9ec7ae8c35996da8ae472b9bb3a7b2387264
+        const foreignChain = "Sui";
+        const foreignEmitter = "acec90b63838349508fd0127bcdfd11fe8bc8b4f9eae881fb723e1d3b29f620d";
+        const cctpDomain = 8;
+
+        const foreignMintAddress =
+            "b9d3d5bba340eefe0e3f93338167ac2e55f7862cdf95f608515e02a51b529eca";
 
         await addCctpRouterEndpoint(
             matchingEngine,
@@ -65,82 +159,7 @@ async function main() {
             foreignChain,
             cctpDomain,
             foreignEmitter,
-            null,
-        );
-    }
-    {
-        // https://testnet.snowtrace.io/address/0x8Cd7D7C980cd72eBD16737dC3fa04469dcFcf07A
-        const foreignChain = "Avalanche";
-        const foreignEmitter = "0x8Cd7D7C980cd72eBD16737dC3fa04469dcFcf07A";
-        const cctpDomain = 1;
-
-        await addCctpRouterEndpoint(
-            matchingEngine,
-            payer,
-            foreignChain,
-            cctpDomain,
-            foreignEmitter,
-            null,
-        );
-    }
-    {
-        // https://sepolia-optimism.etherscan.io/address/0x6BAa7397c18abe6221b4f6C3Ac91C88a9faE00D8
-        const foreignChain = "OptimismSepolia";
-        const foreignEmitter = "0x6BAa7397c18abe6221b4f6C3Ac91C88a9faE00D8";
-        const cctpDomain = 2;
-
-        await addCctpRouterEndpoint(
-            matchingEngine,
-            payer,
-            foreignChain,
-            cctpDomain,
-            foreignEmitter,
-            null,
-        );
-    }
-    {
-        // https://sepolia.arbiscan.io/address/0xe0418C44F06B0b0D7D1706E01706316DBB0B210E
-        const foreignChain = "ArbitrumSepolia";
-        const foreignEmitter = "0xe0418C44F06B0b0D7D1706E01706316DBB0B210E";
-        const cctpDomain = 3;
-
-        await addCctpRouterEndpoint(
-            matchingEngine,
-            payer,
-            foreignChain,
-            cctpDomain,
-            foreignEmitter,
-            null,
-        );
-    }
-    {
-        // https://sepolia.basescan.org/address/0x824Ea687CD1CC2f2446235D33Ae764CbCd08e18C
-        const foreignChain = "BaseSepolia";
-        const foreignEmitter = "0x824Ea687CD1CC2f2446235D33Ae764CbCd08e18C";
-        const cctpDomain = 6;
-
-        await addCctpRouterEndpoint(
-            matchingEngine,
-            payer,
-            foreignChain,
-            cctpDomain,
-            foreignEmitter,
-            null,
-        );
-    }
-    {
-        // https://mumbai.polygonscan.com/address/0xa098368AaaDc0FdF3e309cda710D7A5f8BDEeCD9
-        const foreignChain = "PolygonSepolia";
-        const foreignEmitter = "0xa098368AaaDc0FdF3e309cda710D7A5f8BDEeCD9";
-        const cctpDomain = 7;
-
-        await addCctpRouterEndpoint(
-            matchingEngine,
-            payer,
-            foreignChain,
-            cctpDomain,
-            foreignEmitter,
-            null,
+            foreignMintAddress,
         );
     }
 }
