@@ -3115,6 +3115,51 @@ export type MatchingEngine = {
     {
       "code": 7284,
       "name": "auctionHistoryFull"
+    },
+    {
+      "code": 7536,
+      "name": "invalidVerifyVaaShimProgram"
+    },
+    {
+      "code": 7792,
+      "name": "accountAlreadyInitialized"
+    },
+    {
+      "code": 7794,
+      "name": "accountNotWritable"
+    },
+    {
+      "code": 7796,
+      "name": "borshDeserializationError"
+    },
+    {
+      "code": 7798,
+      "name": "invalidPda"
+    },
+    {
+      "code": 7800,
+      "name": "accountDataTooSmall"
+    },
+    {
+      "code": 7802,
+      "name": "invalidProgram"
+    },
+    {
+      "code": 7804,
+      "name": "tokenTransferFailed"
+    },
+    {
+      "code": 7806,
+      "name": "invalidMint"
+    },
+    {
+      "code": 8048,
+      "name": "sameEndpoints",
+      "msg": "From and to router endpoints are the same"
+    },
+    {
+      "code": 8050,
+      "name": "invalidCctpMessage"
     }
   ],
   "types": [

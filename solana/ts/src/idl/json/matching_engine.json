@@ -3109,6 +3109,51 @@
     {
       "code": 7284,
       "name": "AuctionHistoryFull"
+    },
+    {
+      "code": 7536,
+      "name": "InvalidVerifyVaaShimProgram"
+    },
+    {
+      "code": 7792,
+      "name": "AccountAlreadyInitialized"
+    },
+    {
+      "code": 7794,
+      "name": "AccountNotWritable"
+    },
+    {
+      "code": 7796,
+      "name": "BorshDeserializationError"
+    },
+    {
+      "code": 7798,
+      "name": "InvalidPda"
+    },
+    {
+      "code": 7800,
+      "name": "AccountDataTooSmall"
+    },
+    {
+      "code": 7802,
+      "name": "InvalidProgram"
+    },
+    {
+      "code": 7804,
+      "name": "TokenTransferFailed"
+    },
+    {
+      "code": 7806,
+      "name": "InvalidMint"
+    },
+    {
+      "code": 8048,
+      "name": "SameEndpoints",
+      "msg": "From and to router endpoints are the same"
+    },
+    {
+      "code": 8050,
+      "name": "InvalidCctpMessage"
     }
   ],
   "types": [

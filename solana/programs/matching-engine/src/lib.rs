@@ -10,6 +10,7 @@ mod events;
 mod processor;
 use processor::*;
 
+pub mod fallback;
 pub mod state;
 
 pub mod utils;

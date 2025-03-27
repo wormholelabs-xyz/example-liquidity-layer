@@ -39,6 +39,9 @@ solana-program.workspace = true
 hex.workspace = true
 ruint.workspace = true
 cfg-if.workspace = true
+bytemuck.workspace = true
+wormhole-svm-definitions.workspace = true
+wormhole-svm-shim.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true

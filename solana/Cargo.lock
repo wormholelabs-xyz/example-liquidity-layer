@@ -1297,6 +1297,7 @@ version = "0.0.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "bytemuck",
  "cfg-if",
  "hex",
  "hex-literal",
@@ -1304,6 +1305,8 @@ dependencies = [
  "ruint",
  "solana-program",
  "wormhole-solana-utils",
+ "wormhole-svm-definitions",
+ "wormhole-svm-shim",
 ]
 
 [[package]]
@@ -1895,6 +1898,12 @@ dependencies = [
  "cpufeatures",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "sha2-const-stable"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f179d4e11094a893b82fff208f74d448a7512f99f5a0acbd5c679b705f83ed9"
 
 [[package]]
 name = "sha3"
@@ -2869,6 +2878,26 @@ dependencies = [
  "solana-program",
  "wormhole-raw-vaas",
  "wormhole-solana-consts",
+]
+
+[[package]]
+name = "wormhole-svm-definitions"
+version = "0.1.0"
+source = "git+https://github.com/wormholelabs-xyz/wormhole.git?rev=32cb65dd9ae11547f0e57d106b6974dc8ed5f52d#32cb65dd9ae11547f0e57d106b6974dc8ed5f52d"
+dependencies = [
+ "borsh 1.5.0",
+ "cfg-if",
+ "sha2-const-stable",
+ "solana-program",
+]
+
+[[package]]
+name = "wormhole-svm-shim"
+version = "0.1.0"
+source = "git+https://github.com/wormholelabs-xyz/wormhole.git?rev=32cb65dd9ae11547f0e57d106b6974dc8ed5f52d#32cb65dd9ae11547f0e57d106b6974dc8ed5f52d"
+dependencies = [
+ "solana-program",
+ "wormhole-svm-definitions",
 ]
 
 [[package]]
