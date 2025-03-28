@@ -141,6 +141,12 @@ jobs:
       - name: Set default Rust toolchain
         run: rustup default stable
         working-directory: ./solana
+      - name: Git Submodule Update
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git submodule update --init --recursive
+        working-directory: ./solana
       - name: make anchor-test-upgrade
         run: make anchor-test-upgrade
         working-directory: ./solana
