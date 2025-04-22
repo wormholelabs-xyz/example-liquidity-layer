@@ -239,6 +239,62 @@ pub async fn test_settle_auction_base_fee_token_not_best_offer_actor() {
         .await;
 }
 
+/// Test settle auction none shim
+#[tokio::test]
+pub async fn test_settle_auction_none_shim() {
+    let transfer_direction = TransferDirection::FromEthereumToArbitrum;
+    let (testing_context, mut test_context) = setup_environment(
+        ShimMode::VerifyAndPostSignature,
+        transfer_direction,
+        Some(vec![VaaArgs::default()]),
+    )
+    .await;
+    let testing_engine = TestingEngine::new(testing_context).await;
+
+    let instruction_triggers = vec![
+        InstructionTrigger::InitializeProgram(InitializeInstructionConfig::default()),
+        InstructionTrigger::CreateCctpRouterEndpoints(
+            CreateCctpRouterEndpointsInstructionConfig::default(),
+        ),
+    ];
+    let create_cctp_router_endpoints_state = testing_engine
+        .execute(&mut test_context, instruction_triggers, None)
+        .await;
+
+    // This is just needed to get the router endpoint accounts when prepare order happens before place initial offer, it is not used for anything else
+    let fake_auction_accounts = AuctionAccounts::fake_auction_accounts(
+        &create_cctp_router_endpoints_state,
+        &testing_engine.testing_context,
+    );
+    let instruction_triggers = vec![
+        InstructionTrigger::InitializeFastMarketOrderShim(
+            InitializeFastMarketOrderShimInstructionConfig::default(),
+        ),
+        InstructionTrigger::PrepareOrderShim(PrepareOrderResponseInstructionConfig {
+            overwrite_auction_accounts: Some(fake_auction_accounts),
+            ..Default::default()
+        }),
+    ];
+    let prepared_order_state = testing_engine
+        .execute(
+            &mut test_context,
+            instruction_triggers,
+            Some(create_cctp_router_endpoints_state),
+        )
+        .await;
+
+    let instruction_triggers = vec![InstructionTrigger::SettleAuctionNoneShim(
+        SettleAuctionNoneShimInstructionConfig::default(),
+    )];
+    testing_engine
+        .execute(
+            &mut test_context,
+            instruction_triggers,
+            Some(prepared_order_state),
+        )
+        .await;
+}
+
 /*
                     Sad path tests section
 

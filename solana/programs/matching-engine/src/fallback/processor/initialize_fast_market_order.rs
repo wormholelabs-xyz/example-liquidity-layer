@@ -194,6 +194,5 @@ pub fn initialize_fast_market_order(
         .copy_from_slice(fast_market_order_bytes);
     // End of fast market order account creation
     // ------------------------------------------------------------------------------------------------
-
     Ok(())
 }

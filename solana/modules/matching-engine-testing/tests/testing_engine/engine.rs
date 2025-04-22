@@ -58,6 +58,7 @@ pub enum InstructionTrigger {
     PrepareOrderShim(PrepareOrderResponseInstructionConfig),
     SettleAuction(SettleAuctionInstructionConfig),
     CloseFastMarketOrderShim(CloseFastMarketOrderShimInstructionConfig),
+    SettleAuctionNoneShim(SettleAuctionNoneShimInstructionConfig),
 }
 
 pub enum VerificationTrigger {
@@ -158,6 +159,7 @@ impl InstructionConfig for InstructionTrigger {
             Self::PrepareOrderShim(config) => config.expected_error(),
             Self::SettleAuction(config) => config.expected_error(),
             Self::CloseFastMarketOrderShim(config) => config.expected_error(),
+            Self::SettleAuctionNoneShim(config) => config.expected_error(),
         }
     }
     fn expected_log_messages(&self) -> Option<&Vec<ExpectedLog>> {
@@ -175,6 +177,7 @@ impl InstructionConfig for InstructionTrigger {
             Self::PrepareOrderShimless(config) => config.expected_log_messages(),
             Self::SettleAuction(config) => config.expected_log_messages(),
             Self::CloseFastMarketOrderShim(config) => config.expected_log_messages(),
+            Self::SettleAuctionNoneShim(config) => config.expected_log_messages(),
         }
     }
 }
@@ -337,6 +340,10 @@ impl TestingEngine {
                 }
                 InstructionTrigger::SettleAuction(ref config) => {
                     self.settle_auction(test_context, current_state, config)
+                        .await
+                }
+                InstructionTrigger::SettleAuctionNoneShim(ref config) => {
+                    self.settle_auction_none_shim(test_context, current_state, config)
                         .await
                 }
             },
@@ -531,6 +538,7 @@ impl TestingEngine {
                 auction_state: current_state.auction_state().clone(),
                 auction_accounts: current_state.auction_accounts().cloned(),
                 order_prepared: current_state.order_prepared().cloned(),
+                order_executed: current_state.order_executed().cloned(),
             }
         } else {
             current_state.clone()
@@ -727,7 +735,7 @@ impl TestingEngine {
         current_state: &TestingEngineState,
         config: &ExecuteOrderInstructionConfig,
     ) -> TestingEngineState {
-        let result = shimful::shims_execute_order::execute_order_shimful_test(
+        let result = shimful::shims_execute_order::execute_order_shimful(
             &self.testing_context,
             test_context,
             current_state,
@@ -738,13 +746,7 @@ impl TestingEngine {
             let auction_accounts = current_state
                 .auction_accounts()
                 .expect("Auction accounts not found");
-            let order_executed_fallback_fixture = result.unwrap();
-            let order_executed_state = OrderExecutedState {
-                cctp_message: order_executed_fallback_fixture.cctp_message,
-                post_message_sequence: Some(order_executed_fallback_fixture.post_message_sequence),
-                post_message_message: Some(order_executed_fallback_fixture.post_message_message),
-                actor_enum: config.actor_enum,
-            };
+            let order_executed_state = result.unwrap();
             TestingEngineState::OrderExecuted {
                 base: current_state.base().clone(),
                 initialized: current_state.initialized().unwrap().clone(),
@@ -808,6 +810,7 @@ impl TestingEngine {
                 cctp_message: execute_order_fixture.cctp_message,
                 post_message_sequence: None,
                 post_message_message: None,
+                cctp_message_bump: None,
                 actor_enum: config.actor_enum,
             };
             TestingEngineState::OrderExecuted {
@@ -947,6 +950,34 @@ impl TestingEngine {
         }
     }
 
+    /// Instruction trigger function for settling an auction none shim
+    async fn settle_auction_none_shim(
+        &self,
+        test_context: &mut ProgramTestContext,
+        current_state: &TestingEngineState,
+        config: &SettleAuctionNoneShimInstructionConfig,
+    ) -> TestingEngineState {
+        let auction_state = shimful::shims_settle_auction_none::settle_auction_none_shimful(
+            &self.testing_context,
+            test_context,
+            current_state,
+            config,
+        )
+        .await;
+        match auction_state {
+            AuctionState::Settled => TestingEngineState::AuctionSettled {
+                base: current_state.base().clone(),
+                initialized: current_state.initialized().unwrap().clone(),
+                router_endpoints: current_state.router_endpoints().unwrap().clone(),
+                auction_state: current_state.auction_state().clone(),
+                fast_market_order: current_state.fast_market_order().cloned(),
+                order_prepared: current_state.order_prepared().unwrap().clone(),
+                auction_accounts: current_state.auction_accounts().cloned(),
+                order_executed: current_state.order_executed().cloned(),
+            },
+            _ => current_state.clone(),
+        }
+    }
     async fn verify_auction_state(
         &self,
         test_context: &mut ProgramTestContext,

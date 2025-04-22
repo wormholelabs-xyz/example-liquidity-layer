@@ -6,6 +6,9 @@ use super::initialize_fast_market_order::{
 use super::place_initial_offer::{place_initial_offer_cctp_shim, PlaceInitialOfferCctpShimData};
 use super::prepare_order_response::prepare_order_response_cctp_shim;
 use super::prepare_order_response::PrepareOrderResponseCctpShimData;
+use super::settle_auction_none_cctp::{
+    settle_auction_none_cctp_shim, SettleAuctionNoneCctpShimData,
+};
 use crate::ID;
 use anchor_lang::prelude::*;
 use wormhole_svm_definitions::make_anchor_discriminator;
@@ -21,6 +24,8 @@ impl<'ix> FallbackMatchingEngineInstruction<'ix> {
         make_anchor_discriminator(b"global:execute_order_cctp_shim");
     pub const PREPARE_ORDER_RESPONSE_CCTP_SHIM_SELECTOR: [u8; 8] =
         make_anchor_discriminator(b"global:prepare_order_response_cctp_shim");
+    pub const SETTLE_AUCTION_NONE_CCTP_SELECTOR: [u8; 8] =
+        make_anchor_discriminator(b"global:settle_auction_none_cctp_shim");
 }
 
 pub enum FallbackMatchingEngineInstruction<'ix> {
@@ -29,6 +34,7 @@ pub enum FallbackMatchingEngineInstruction<'ix> {
     PlaceInitialOfferCctpShim(&'ix PlaceInitialOfferCctpShimData),
     ExecuteOrderCctpShim,
     PrepareOrderResponseCctpShim(PrepareOrderResponseCctpShimData),
+    SettleAuctionNoneCctp(SettleAuctionNoneCctpShimData),
 }
 
 pub fn process_instruction(
@@ -56,6 +62,9 @@ pub fn process_instruction(
         }
         FallbackMatchingEngineInstruction::PrepareOrderResponseCctpShim(data) => {
             prepare_order_response_cctp_shim(accounts, data)
+        }
+        FallbackMatchingEngineInstruction::SettleAuctionNoneCctp(data) => {
+            settle_auction_none_cctp_shim(accounts, data)
         }
     }
 }
@@ -85,6 +94,11 @@ impl<'ix> FallbackMatchingEngineInstruction<'ix> {
             FallbackMatchingEngineInstruction::PREPARE_ORDER_RESPONSE_CCTP_SHIM_SELECTOR => {
                 Some(Self::PrepareOrderResponseCctpShim(
                     PrepareOrderResponseCctpShimData::from_bytes(&instruction_data[8..]).unwrap(),
+                ))
+            }
+            FallbackMatchingEngineInstruction::SETTLE_AUCTION_NONE_CCTP_SELECTOR => {
+                Some(Self::SettleAuctionNoneCctp(
+                    SettleAuctionNoneCctpShimData::from_bytes(&instruction_data[8..]).unwrap(),
                 ))
             }
             _ => None,
@@ -156,6 +170,19 @@ impl FallbackMatchingEngineInstruction<'_> {
 
                 out.extend_from_slice(
                     &FallbackMatchingEngineInstruction::PREPARE_ORDER_RESPONSE_CCTP_SHIM_SELECTOR,
+                );
+                out.extend_from_slice(&data_slice);
+
+                out
+            }
+            Self::SettleAuctionNoneCctp(data) => {
+                let data_slice = data.to_bytes();
+                let total_capacity = 8_usize.saturating_add(data_slice.len()); // 8 for the selector, plus the data length
+
+                let mut out = Vec::with_capacity(total_capacity);
+
+                out.extend_from_slice(
+                    &FallbackMatchingEngineInstruction::SETTLE_AUCTION_NONE_CCTP_SELECTOR,
                 );
                 out.extend_from_slice(&data_slice);
 

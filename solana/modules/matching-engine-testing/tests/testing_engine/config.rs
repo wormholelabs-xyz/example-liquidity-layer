@@ -177,7 +177,7 @@ impl InstructionConfig for PrepareOrderResponseInstructionConfig {
 
 #[derive(Clone)]
 pub struct ExecuteOrderInstructionConfig {
-    pub fast_market_order_address: OverwriteCurrentState<Pubkey>,
+    pub override_fast_market_order_address: OverwriteCurrentState<Pubkey>,
     pub actor_enum: TestingActorEnum,
     pub token_enum: SplTokenEnum,
     pub vaa_index: usize,
@@ -192,7 +192,7 @@ impl Default for ExecuteOrderInstructionConfig {
         Self {
             fast_forward_slots: 3,
             actor_enum: TestingActorEnum::default(),
-            fast_market_order_address: None,
+            override_fast_market_order_address: None,
             token_enum: SplTokenEnum::default(),
             vaa_index: 0,
             payer_signer: None,
@@ -618,4 +618,20 @@ pub struct BalanceChange {
     pub lamports: i32,
     pub usdc: i32,
     pub usdt: i32,
+}
+
+#[derive(Default)]
+pub struct SettleAuctionNoneShimInstructionConfig {
+    pub payer_signer: Option<Rc<Keypair>>,
+    pub expected_error: Option<ExpectedError>,
+    pub expected_log_messages: Option<Vec<ExpectedLog>>,
+}
+
+impl InstructionConfig for SettleAuctionNoneShimInstructionConfig {
+    fn expected_error(&self) -> Option<&ExpectedError> {
+        self.expected_error.as_ref()
+    }
+    fn expected_log_messages(&self) -> Option<&Vec<ExpectedLog>> {
+        self.expected_log_messages.as_ref()
+    }
 }

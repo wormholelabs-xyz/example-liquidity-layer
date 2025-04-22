@@ -77,6 +77,7 @@ pub struct OfferImprovedState {
 #[derive(Clone)]
 pub struct OrderExecutedState {
     pub cctp_message: Pubkey,
+    pub cctp_message_bump: Option<u8>,
     pub post_message_sequence: Option<Pubkey>, // Only set if shimful execution
     pub post_message_message: Option<Pubkey>,  // Only set if shimful execution
     pub actor_enum: TestingActorEnum,
@@ -118,6 +119,7 @@ pub enum TestingEngineState {
         auction_state: AuctionState,
         auction_accounts: Option<AuctionAccounts>,
         order_prepared: Option<OrderPreparedState>,
+        order_executed: Option<OrderExecutedState>,
     },
     InitialOfferPlaced {
         base: BaseState,
@@ -345,6 +347,8 @@ impl TestingEngineState {
         match self {
             Self::AuctionSettled { order_executed, .. } => order_executed.as_ref(),
             Self::OrderExecuted { order_executed, .. } => Some(order_executed),
+            Self::FastMarketOrderClosed { order_executed, .. } => order_executed.as_ref(),
+            Self::FastMarketOrderAccountCreated { order_executed, .. } => order_executed.as_ref(),
             _ => None,
         }
     }
@@ -383,6 +387,7 @@ impl TestingEngineState {
                 auction_state: _, // Ignore the current auction state
                 auction_accounts,
                 order_prepared,
+                order_executed,
             } => Ok(Self::FastMarketOrderAccountCreated {
                 base: base.clone(),
                 initialized: initialized.clone(),
@@ -392,6 +397,7 @@ impl TestingEngineState {
                 auction_state: new_auction_state, // Use the new auction state
                 auction_accounts: auction_accounts.clone(),
                 order_prepared: order_prepared.clone(),
+                order_executed: order_executed.clone(),
             }),
 
             Self::InitialOfferPlaced {
