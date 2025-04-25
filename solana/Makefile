@@ -46,7 +46,7 @@ anchor-test-setup: node_modules ts/tests/artifacts $(CLONED_MAINNET_PROGRAMS)
 
 .PHONY: idl
 idl:
-	anchor build -- --features localnet
+	anchor build -- --features localnet --verbose
 	mkdir -p ts/src/idl/json
 	mkdir -p ts/src/idl/ts
 	cp -r target/idl/* ts/src/idl/json/
