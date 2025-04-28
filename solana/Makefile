@@ -42,7 +42,7 @@ endif
 
 .PHONY: anchor-test-setup
 anchor-test-setup: node_modules ts/tests/artifacts $(CLONED_MAINNET_PROGRAMS)
-	anchor build -- --features integration-test
+	anchor build --no-idl -- --features integration-test
 
 .PHONY: idl
 idl:
@@ -65,7 +65,7 @@ anchor-test: anchor-test-setup
 
 .PHONY: anchor-test-upgrade
 anchor-test-upgrade: node_modules ts/tests/artifacts $(CLONED_MAINNET_PROGRAMS)
-	anchor build -- --features testnet
+	anchor build --no-idl -- --features testnet
 	cp target/deploy/matching_engine.so ts/tests/artifacts/new_testnet_matching_engine.so
 	cp target/deploy/token_router.so ts/tests/artifacts/new_testnet_token_router.so
 	cp target/deploy/upgrade_manager.so ts/tests/artifacts/testnet_upgrade_manager.so
