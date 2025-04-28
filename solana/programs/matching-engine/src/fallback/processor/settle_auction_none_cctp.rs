@@ -37,34 +37,63 @@ impl SettleAuctionNoneCctpShimData {
 }
 
 pub struct SettleAuctionNoneCctpShimAccounts<'ix> {
+    /// Payer of the account
     pub payer: &'ix Pubkey,                                        // 0
+    /// Post message message account
     pub post_message_message: &'ix Pubkey,                         // 1
+    /// Post message sequence account
     pub post_message_sequence: &'ix Pubkey,                        // 2
+    /// Post message shim event authority CHECK: Mutable. Seeds must be \["core-msg", payer, payer_sequence.value\].
     pub post_message_shim_event_authority: &'ix Pubkey,            // 3
+    /// Post message shim program
     pub post_message_shim_program: &'ix Pubkey,                    // 4
+    /// Cctp message
     pub cctp_message: &'ix Pubkey,                                 // 5
+    /// Custodian account
     pub custodian: &'ix Pubkey,                                    // 6
+    /// Fee recipient token
     pub fee_recipient_token: &'ix Pubkey,                          // 7
+    /// Closed prepared order response actor (closed_by)
     pub closed_prepared_order_response_actor: &'ix Pubkey,         // 8
+    /// Closed prepared order response
     pub closed_prepared_order_response: &'ix Pubkey,               // 9
+    /// Closed prepared order response custody token
     pub closed_prepared_order_response_custody_token: &'ix Pubkey, // 10
+    /// Auction account
     pub auction: &'ix Pubkey,                                      // 11
+    /// Cctp mint (must be USDC mint)
     pub cctp_mint: &'ix Pubkey,                                    // 12
+    /// Cctp token messenger minter sender authority
     pub cctp_token_messenger_minter_sender_authority: &'ix Pubkey, // 13
+    /// Cctp message transmitter config
     pub cctp_message_transmitter_config: &'ix Pubkey,              // 14
+    /// Cctp token messenger
     pub cctp_token_messenger: &'ix Pubkey,                         // 15
+    /// Cctp remote token messenger
     pub cctp_remote_token_messenger: &'ix Pubkey,                  // 16
+    /// Cctp token minter
     pub cctp_token_minter: &'ix Pubkey,                            // 17
+    /// Cctp local token
     pub cctp_local_token: &'ix Pubkey,                             // 18
+    /// Cctp token messenger minter event authority
     pub cctp_token_messenger_minter_event_authority: &'ix Pubkey,  // 19
+    /// Cctp token messenger minter program
     pub cctp_token_messenger_minter_program: &'ix Pubkey,          // 20
+    /// Cctp message transmitter program
     pub cctp_message_transmitter_program: &'ix Pubkey,             // 21
+    /// Core bridge program
     pub core_bridge_program: &'ix Pubkey,                          // 22
+    /// Core bridge fee collector
     pub core_bridge_fee_collector: &'ix Pubkey,                    // 23
+    /// Core bridge config
     pub core_bridge_config: &'ix Pubkey,                           // 24
+    /// Token program
     pub token_program: &'ix Pubkey,                                // 25
+    /// System program
     pub system_program: &'ix Pubkey,                               // 26
+    /// Clock
     pub clock: &'ix Pubkey,                                        // 27
+    /// Rent
     pub rent: &'ix Pubkey,                                         // 28
 }
 
@@ -179,7 +208,6 @@ pub fn settle_auction_none_cctp_shim(
     let auction_pda = Pubkey::create_program_address(&auction_seeds, program_id)
         .map_err(|_| MatchingEngineError::InvalidPda)?;
     if auction_pda != auction.key() {
-        msg!("Auction pda is invalid");
         return Err(MatchingEngineError::InvalidPda.into());
     }
     let auction_signer_seeds = &[&auction_seeds[..]];
@@ -275,7 +303,6 @@ pub fn settle_auction_none_cctp_shim(
         post_message_accounts,
         accounts,
     )?;
-    msg!("Got here 17");
     // TODO: Emit event?
     let close_token_account_ix = spl_token::instruction::close_account(
         &spl_token::ID,
@@ -284,13 +311,11 @@ pub fn settle_auction_none_cctp_shim(
         &custodian.key(),
         &[],
     )?;
-    msg!("Got here 18");
     invoke_signed_unchecked(
         &close_token_account_ix,
         accounts,
         &[&Custodian::SIGNER_SEEDS],
     )?;
-    msg!("Got here 19");
     Ok(())
 }
 
