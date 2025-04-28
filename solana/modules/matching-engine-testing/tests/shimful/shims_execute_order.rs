@@ -203,8 +203,8 @@ impl ExecuteOrderShimAccountsOwned {
     pub fn as_ref(&self) -> ExecuteOrderShimAccounts {
         ExecuteOrderShimAccounts {
             cctp_message: &self.cctp_message,
-            post_message_sequence: &self.post_message_sequence,
-            post_message_message: &self.post_message_message,
+            core_bridge_emitter_sequence: &self.post_message_sequence,
+            post_shim_message: &self.post_message_message,
             signer: &self.signer,
             custodian: &self.custodian,
             fast_market_order: &self.fast_market_order,
@@ -394,9 +394,8 @@ pub async fn execute_order_shimful_test(
     execute_order_shimful(
         testing_context,
         test_context,
+        current_state,
         config,
-        &execute_order_fallback_accounts,
-        expected_error,
     )
     .await
 }
