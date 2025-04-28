@@ -118,7 +118,7 @@ impl SettleAuctionNoneCctpShimAccountsOwned {
     pub fn as_ref(&self) -> SettleAuctionNoneCctpShimAccounts {
         SettleAuctionNoneCctpShimAccounts {
             payer: &self.payer,
-            post_message_message: &self.post_message_message,
+            post_shim_message: &self.post_message_message,
             post_message_sequence: &self.post_message_sequence,
             post_message_shim_event_authority: &self.post_message_shim_event_authority,
             post_message_shim_program: &self.post_message_shim_program,
