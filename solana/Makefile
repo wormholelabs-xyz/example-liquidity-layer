@@ -42,11 +42,17 @@ endif
 
 .PHONY: anchor-test-setup
 anchor-test-setup: node_modules ts/tests/artifacts $(CLONED_MAINNET_PROGRAMS)
-	anchor build -- --features integration-test
+	anchor build --no-idl -- --features integration-test
 
 .PHONY: idl
 idl:
-	anchor build -- --features localnet
+	mkdir -p target/idl target/types
+	RUSTUP_TOOLCHAIN=nightly-2024-06-20 anchor idl build -p matching-engine -o target/idl/matching_engine.json
+	anchor idl type -o target/types/matching_engine.ts target/idl/matching_engine.json
+	RUSTUP_TOOLCHAIN=nightly-2024-06-20 anchor idl build -p token-router -o target/idl/token_router.json
+	anchor idl type -o target/types/token_router.ts target/idl/token_router.json
+	RUSTUP_TOOLCHAIN=nightly-2024-06-20 anchor idl build -p upgrade-manager -o target/idl/upgrade_manager.json
+	anchor idl type -o target/types/upgrade_manager.ts target/idl/upgrade_manager.json
 	mkdir -p ts/src/idl/json
 	mkdir -p ts/src/idl/ts
 	cp -r target/idl/* ts/src/idl/json/
@@ -65,7 +71,7 @@ anchor-test: anchor-test-setup
 
 .PHONY: anchor-test-upgrade
 anchor-test-upgrade: node_modules ts/tests/artifacts $(CLONED_MAINNET_PROGRAMS)
-	anchor build -- --features testnet
+	anchor build --no-idl -- --features testnet
 	cp target/deploy/matching_engine.so ts/tests/artifacts/new_testnet_matching_engine.so
 	cp target/deploy/token_router.so ts/tests/artifacts/new_testnet_token_router.so
 	cp target/deploy/upgrade_manager.so ts/tests/artifacts/testnet_upgrade_manager.so
