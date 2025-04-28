@@ -119,7 +119,7 @@ impl SettleAuctionNoneCctpShimAccountsOwned {
         SettleAuctionNoneCctpShimAccounts {
             payer: &self.payer,
             post_shim_message: &self.post_message_message,
-            post_message_sequence: &self.post_message_sequence,
+            core_bridge_emitter_sequence: &self.post_message_sequence,
             post_message_shim_event_authority: &self.post_message_shim_event_authority,
             post_message_shim_program: &self.post_message_shim_program,
             cctp_message: &self.cctp_message,

@@ -286,116 +286,17 @@ pub fn create_cctp_accounts(
     )
     .0;
     let token_messenger_minter_event_authority =
-        &Pubkey::find_program_address(&[EVENT_AUTHORITY_SEED], &TOKEN_MESSENGER_MINTER_PROGRAM_ID)
-            .0;
-    let post_message_sequence = wormhole_svm_definitions::find_emitter_sequence_address(
-        &execute_order_fallback_accounts.custodian,
-        &CORE_BRIDGE_PROGRAM_ID,
-    )
-    .0;
-    let post_message_message = wormhole_svm_definitions::find_shim_message_address(
-        &execute_order_fallback_accounts.custodian,
-        &POST_MESSAGE_SHIM_PROGRAM_ID,
-    )
-    .0;
-    let solver = config.actor_enum.get_actor(&testing_context.testing_actors);
-    let executor_token = solver.token_account_address(&config.token_enum).unwrap();
-    ExecuteOrderFallbackFixture {
-        cctp_message,
-        post_message_sequence,
-        post_message_message,
-        accounts: ExecuteOrderFallbackFixtureAccounts {
-            local_token,
-            token_messenger,
-            remote_token_messenger,
-            token_messenger_minter_sender_authority,
-            token_messenger_minter_event_authority: *token_messenger_minter_event_authority,
-            messenger_transmitter_config,
-            token_minter,
-            executor_token,
-        },
+        Pubkey::find_program_address(&[EVENT_AUTHORITY_SEED], &TOKEN_MESSENGER_MINTER_PROGRAM_ID).0;
+    CctpAccounts {
+        mint: utils::constants::USDC_MINT,
+        token_messenger,
+        token_messenger_minter_sender_authority,
+        token_messenger_minter_event_authority,
+        message_transmitter_config,
+        token_minter,
+        local_token,
+        remote_token_messenger,
+        token_messenger_minter_program: TOKEN_MESSENGER_MINTER_PROGRAM_ID,
+        message_transmitter_program: MESSAGE_TRANSMITTER_PROGRAM_ID,
     }
-}
-
-pub fn create_execute_order_shim_accounts<'ix>(
-    execute_order_fallback_accounts: &'ix ExecuteOrderFallbackAccounts,
-    execute_order_fallback_fixture: &'ix ExecuteOrderFallbackFixture,
-    clock_id: &'ix Pubkey,
-) -> ExecuteOrderShimAccounts<'ix> {
-    ExecuteOrderShimAccounts {
-        signer: &execute_order_fallback_accounts.signer, // 0
-        cctp_message: &execute_order_fallback_fixture.cctp_message, // 1
-        custodian: &execute_order_fallback_accounts.custodian, // 2
-        fast_market_order: &execute_order_fallback_accounts.fast_market_order_address, // 3
-        active_auction: &execute_order_fallback_accounts.active_auction, // 4
-        active_auction_custody_token: &execute_order_fallback_accounts.active_auction_custody_token, // 5
-        active_auction_config: &execute_order_fallback_accounts.active_auction_config, // 6
-        active_auction_best_offer_token: &execute_order_fallback_accounts
-            .active_auction_best_offer_token, // 7
-        executor_token: &execute_order_fallback_fixture.accounts.executor_token,       // 8
-        initial_offer_token: &execute_order_fallback_accounts.initial_offer_token,     // 9
-        initial_participant: &execute_order_fallback_accounts.initial_participant,     // 10
-        to_router_endpoint: &execute_order_fallback_accounts.to_router_endpoint,       // 11
-        post_message_shim_program: &POST_MESSAGE_SHIM_PROGRAM_ID,                      // 12
-        core_bridge_emitter_sequence: &execute_order_fallback_fixture.post_message_sequence, // 13
-        post_shim_message: &execute_order_fallback_fixture.post_message_message,       // 14
-        cctp_deposit_for_burn_mint: &USDC_MINT,                                        // 15
-        cctp_deposit_for_burn_token_messenger_minter_sender_authority:
-            &execute_order_fallback_fixture
-                .accounts
-                .token_messenger_minter_sender_authority, // 16
-        cctp_deposit_for_burn_message_transmitter_config: &execute_order_fallback_fixture
-            .accounts
-            .messenger_transmitter_config, // 17
-        cctp_deposit_for_burn_token_messenger: &execute_order_fallback_fixture
-            .accounts
-            .token_messenger, // 18
-        cctp_deposit_for_burn_remote_token_messenger: &execute_order_fallback_fixture
-            .accounts
-            .remote_token_messenger, // 19
-        cctp_deposit_for_burn_token_minter: &execute_order_fallback_fixture.accounts.token_minter, // 20
-        cctp_deposit_for_burn_local_token: &execute_order_fallback_fixture.accounts.local_token, // 21
-        cctp_deposit_for_burn_token_messenger_minter_event_authority:
-            &execute_order_fallback_fixture
-                .accounts
-                .token_messenger_minter_event_authority, // 22
-        cctp_deposit_for_burn_token_messenger_minter_program: &TOKEN_MESSENGER_MINTER_PROGRAM_ID, // 23
-        cctp_deposit_for_burn_message_transmitter_program: &MESSAGE_TRANSMITTER_PROGRAM_ID, // 24
-        core_bridge_program: &CORE_BRIDGE_PROGRAM_ID,                                       // 25
-        core_bridge_config: &CORE_BRIDGE_CONFIG,                                            // 26
-        core_bridge_fee_collector: &CORE_BRIDGE_FEE_COLLECTOR,                              // 27
-        post_message_shim_event_authority: &POST_MESSAGE_SHIM_EVENT_AUTHORITY,              // 28
-        system_program: &solana_program::system_program::ID,                                // 29
-        token_program: &spl_token::ID,                                                      // 30
-        clock: clock_id,                                                                    // 31
-    }
-}
-
-pub async fn execute_order_shimful_test(
-    testing_context: &TestingContext,
-    test_context: &mut ProgramTestContext,
-    current_state: &TestingEngineState,
-    config: &ExecuteOrderInstructionConfig,
-) -> Option<ExecuteOrderFallbackFixture> {
-    let expected_error = config.expected_error();
-    let fixture_accounts = testing_context
-        .get_fixture_accounts()
-        .expect("Pre-made fixture accounts not found");
-    let payer_signer = config
-        .payer_signer
-        .clone()
-        .unwrap_or_else(|| testing_context.testing_actors.payer_signer.clone());
-    let execute_order_fallback_accounts = ExecuteOrderFallbackAccounts::new(
-        current_state,
-        &payer_signer.pubkey(),
-        &fixture_accounts,
-        config.fast_market_order_address,
-    );
-    execute_order_shimful(
-        testing_context,
-        test_context,
-        current_state,
-        config,
-    )
-    .await
 }

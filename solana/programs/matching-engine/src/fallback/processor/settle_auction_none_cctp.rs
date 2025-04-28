@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     burn_and_post::{burn_and_post, PostMessageAccounts, PostMessageDerivedAccounts},
-    helpers::{check_account_length, create_account_reliably},
+    helpers::{require_min_account_infos_len, create_account_reliably},
 };
 
 #[derive(Copy, Clone)]
@@ -39,10 +39,10 @@ impl SettleAuctionNoneCctpShimData {
 pub struct SettleAuctionNoneCctpShimAccounts<'ix> {
     /// Payer of the account
     pub payer: &'ix Pubkey,                                        // 0
-    /// Post message message account
-    pub post_message_message: &'ix Pubkey,                         // 1
-    /// Post message sequence account
-    pub post_message_sequence: &'ix Pubkey,                        // 2
+    /// Post shim message account
+    pub post_shim_message: &'ix Pubkey,                         // 1
+    /// Core bridge emitter sequence account
+    pub core_bridge_emitter_sequence: &'ix Pubkey,                        // 2
     /// Post message shim event authority CHECK: Mutable. Seeds must be \["core-msg", payer, payer_sequence.value\].
     pub post_message_shim_event_authority: &'ix Pubkey,            // 3
     /// Post message shim program
@@ -101,8 +101,8 @@ impl<'ix> SettleAuctionNoneCctpShimAccounts<'ix> {
     pub fn to_account_metas(&self) -> Vec<AccountMeta> {
         vec![
             AccountMeta::new_readonly(*self.payer, true),        // 0
-            AccountMeta::new(*self.post_message_message, false), // 1
-            AccountMeta::new(*self.post_message_sequence, false), // 2
+            AccountMeta::new(*self.post_shim_message, false), // 1
+            AccountMeta::new(*self.core_bridge_emitter_sequence, false), // 2
             AccountMeta::new_readonly(*self.post_message_shim_event_authority, false), // 3
             AccountMeta::new_readonly(*self.post_message_shim_program, false), // 4
             AccountMeta::new(*self.cctp_message, false),         // 5
@@ -138,10 +138,10 @@ pub fn settle_auction_none_cctp_shim(
     data: SettleAuctionNoneCctpShimData,
 ) -> Result<()> {
     let program_id = &crate::ID;
-    check_account_length(accounts, 29)?;
+    require_min_account_infos_len(accounts, 29)?;
     let payer = &accounts[0];
-    let post_message_message = &accounts[1];
-    let post_message_sequence = &accounts[2];
+    let post_shim_message = &accounts[1];
+    let core_bridge_emitter_sequence = &accounts[2];
     let _post_message_shim_event_authority = &accounts[3];
     let _post_message_shim_program = &accounts[4];
     let cctp_message = &accounts[5];
@@ -255,8 +255,8 @@ pub fn settle_auction_none_cctp_shim(
         emitter: custodian.key(),
         payer: payer.key(),
         derived: PostMessageDerivedAccounts {
-            message: post_message_message.key(),
-            sequence: post_message_sequence.key(),
+            message: post_shim_message.key(),
+            sequence: core_bridge_emitter_sequence.key(),
         },
     };
     burn_and_post(
