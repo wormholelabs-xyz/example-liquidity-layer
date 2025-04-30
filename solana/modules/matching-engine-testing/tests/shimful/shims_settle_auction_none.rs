@@ -18,7 +18,7 @@ use wormhole_svm_definitions::solana::{
 
 use crate::{
     testing_engine::{
-        config::{InstructionConfig, SettleAuctionNoneShimInstructionConfig},
+        config::{InstructionConfig, SettleAuctionNoneInstructionConfig},
         setup::TestingContext,
         state::{OrderPreparedState, TestingEngineState},
     },
@@ -47,7 +47,7 @@ pub async fn settle_auction_none_shimful(
     testing_context: &TestingContext,
     test_context: &mut ProgramTestContext,
     current_state: &TestingEngineState,
-    config: &SettleAuctionNoneShimInstructionConfig,
+    config: &SettleAuctionNoneInstructionConfig,
 ) -> AuctionState {
     let payer_signer = &config
         .payer_signer
@@ -55,7 +55,7 @@ pub async fn settle_auction_none_shimful(
         .unwrap_or_else(|| testing_context.testing_actors.payer_signer.clone());
 
     let settle_auction_none_cctp_accounts =
-        create_settle_auction_none_cctp_accounts(testing_context, current_state, config);
+        create_settle_auction_none_cctp_shimful_accounts(testing_context, current_state, config);
     let settle_auction_none_cctp_data = settle_auction_none_cctp_accounts.bumps;
 
     let settle_auction_none_cctp_ix = SettleAuctionNoneCctpShim {
@@ -153,10 +153,10 @@ impl SettleAuctionNoneCctpShimAccountsOwned {
     }
 }
 
-fn create_settle_auction_none_cctp_accounts(
+fn create_settle_auction_none_cctp_shimful_accounts(
     testing_context: &TestingContext,
     current_state: &TestingEngineState,
-    config: &SettleAuctionNoneShimInstructionConfig,
+    config: &SettleAuctionNoneInstructionConfig,
 ) -> SettleAuctionNoneCctpShimAccountsOwned {
     let payer_signer = &config
         .payer_signer
@@ -168,12 +168,8 @@ fn create_settle_auction_none_cctp_accounts(
         prepared_order_response_address,
         prepared_custody_token,
         base_fee_token,
-        actor_enum,
+        prepared_by,
     } = *order_prepared_state;
-
-    let prepared_order_by = actor_enum
-        .get_actor(&testing_context.testing_actors)
-        .pubkey();
 
     let custodian = current_state
         .custodian_address()
@@ -223,7 +219,7 @@ fn create_settle_auction_none_cctp_accounts(
         cctp_message,
         custodian,
         fee_recipient_token: base_fee_token,
-        closed_prepared_order_response_actor: prepared_order_by,
+        closed_prepared_order_response_actor: prepared_by,
         closed_prepared_order_response: prepared_order_response_address,
         closed_prepared_order_response_custody_token: prepared_custody_token,
         auction,

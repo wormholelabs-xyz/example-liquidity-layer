@@ -187,6 +187,9 @@ pub fn settle_auction_none_cctp_shim(
         _ => return Err(MatchingEngineError::InvalidCctpEndpoint.into()),
     };
 
+    let auction_key = auction.key();
+
+
     // Start of checks
     // ------------------------------------------------------------------------------------------------
 
@@ -196,7 +199,6 @@ pub fn settle_auction_none_cctp_shim(
         return Err(MatchingEngineError::AccountNotWritable.into())
             .map_err(|e: Error| e.with_account_name("cctp_message"));
     }
-    let auction_key = auction.key();
 
     // Check cctp message seeds are valid
     let cctp_message_seeds = [
@@ -214,11 +216,10 @@ pub fn settle_auction_none_cctp_shim(
     };
     // Check custodian owner is the matching engine program and that it deserializes into a checked custodian
     require_eq!(custodian.owner, &ID);
-    let _checked_custodian = Custodian::try_deserialize(&mut &custodian.data.borrow_mut()[..])?;
-    // Check that fee recipient token is a token account
-    let _checked_fee_recipient_token = Box::new(TokenAccount::try_deserialize(
-        &mut &fee_recipient_token.data.borrow_mut()[..],
-    )?);
+    let checked_custodian = Custodian::try_deserialize(&mut &custodian.data.borrow_mut()[..])?;
+    // Check that the fee recipient token is the custodian's fee recipient token
+    require_eq!(fee_recipient_token.key(), checked_custodian.fee_recipient_token);
+    
     // Check seeds of prepared order response are valid
     let prepared_order_response_pda = Pubkey::create_program_address(
         &[
@@ -257,6 +258,13 @@ pub fn settle_auction_none_cctp_shim(
             });
         };
     }
+
+    // Check prepared by is the same as the prepared by in the accounts
+    require_eq!(
+        prepared_order_response_account.prepared_by,
+        closed_prepared_order_response_actor.key()
+    );
+
     // Check that custody token is a token account
     let _checked_prepared_custody_token = Box::new(TokenAccount::try_deserialize(
         &mut &closed_prepared_order_response_custody_token

@@ -621,13 +621,13 @@ pub struct BalanceChange {
 }
 
 #[derive(Default)]
-pub struct SettleAuctionNoneShimInstructionConfig {
+pub struct SettleAuctionNoneInstructionConfig {
     pub payer_signer: Option<Rc<Keypair>>,
     pub expected_error: Option<ExpectedError>,
     pub expected_log_messages: Option<Vec<ExpectedLog>>,
 }
 
-impl InstructionConfig for SettleAuctionNoneShimInstructionConfig {
+impl InstructionConfig for SettleAuctionNoneInstructionConfig {
     fn expected_error(&self) -> Option<&ExpectedError> {
         self.expected_error.as_ref()
     }

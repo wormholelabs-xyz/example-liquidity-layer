@@ -120,9 +120,6 @@ pub async fn test_prepare_order_shimless() {
         InstructionTrigger::CreateCctpRouterEndpoints(
             CreateCctpRouterEndpointsInstructionConfig::default(),
         ),
-        InstructionTrigger::InitializeFastMarketOrderShim(
-            InitializeFastMarketOrderShimInstructionConfig::default(),
-        ),
         InstructionTrigger::PlaceInitialOfferShimless(PlaceInitialOfferInstructionConfig::default()),
         InstructionTrigger::ExecuteOrderShimless(ExecuteOrderInstructionConfig::default()),
         InstructionTrigger::PrepareOrderShimless(PrepareOrderResponseInstructionConfig::default()),

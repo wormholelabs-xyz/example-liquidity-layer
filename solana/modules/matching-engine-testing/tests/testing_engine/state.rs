@@ -88,7 +88,8 @@ pub struct OrderPreparedState {
     pub prepared_order_response_address: Pubkey,
     pub prepared_custody_token: Pubkey,
     pub base_fee_token: Pubkey,
-    pub actor_enum: TestingActorEnum,
+    /// This will be the signer of the prepare order response instruction
+    pub prepared_by: Pubkey,
 }
 
 #[derive(Clone)]

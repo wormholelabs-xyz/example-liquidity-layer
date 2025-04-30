@@ -23,7 +23,7 @@ use matching_engine::state::{Auction, AuctionConfig, AuctionInfo};
 /// * `to_router_endpoint` - The address of the router endpoint for the destination chain
 /// * `custodian` - The address of the custodian
 /// * `usdc_mint` - The usdc mint address
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AuctionAccounts {
     pub posted_fast_vaa: Option<Pubkey>,
     pub offer_token: Pubkey,

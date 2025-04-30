@@ -58,7 +58,8 @@ pub enum InstructionTrigger {
     PrepareOrderShim(PrepareOrderResponseInstructionConfig),
     SettleAuction(SettleAuctionInstructionConfig),
     CloseFastMarketOrderShim(CloseFastMarketOrderShimInstructionConfig),
-    SettleAuctionNoneShim(SettleAuctionNoneShimInstructionConfig),
+    SettleAuctionNoneShim(SettleAuctionNoneInstructionConfig),
+    SettleAuctionNoneShimless(SettleAuctionNoneInstructionConfig),
 }
 
 pub enum VerificationTrigger {
@@ -160,6 +161,7 @@ impl InstructionConfig for InstructionTrigger {
             Self::SettleAuction(config) => config.expected_error(),
             Self::CloseFastMarketOrderShim(config) => config.expected_error(),
             Self::SettleAuctionNoneShim(config) => config.expected_error(),
+            Self::SettleAuctionNoneShimless(config) => config.expected_error(),
         }
     }
     fn expected_log_messages(&self) -> Option<&Vec<ExpectedLog>> {
@@ -178,6 +180,7 @@ impl InstructionConfig for InstructionTrigger {
             Self::SettleAuction(config) => config.expected_log_messages(),
             Self::CloseFastMarketOrderShim(config) => config.expected_log_messages(),
             Self::SettleAuctionNoneShim(config) => config.expected_log_messages(),
+            Self::SettleAuctionNoneShimless(config) => config.expected_log_messages(),
         }
     }
 }
@@ -344,6 +347,10 @@ impl TestingEngine {
                 }
                 InstructionTrigger::SettleAuctionNoneShim(ref config) => {
                     self.settle_auction_none_shim(test_context, current_state, config)
+                        .await
+                }
+                InstructionTrigger::SettleAuctionNoneShimless(ref config) => {
+                    self.settle_auction_none_shimless(test_context, current_state, config)
                         .await
                 }
             },
@@ -798,10 +805,9 @@ impl TestingEngine {
         let result = shimless::execute_order::execute_order_shimless_test(
             &self.testing_context,
             test_context,
+            current_state,
             config,
             &auction_accounts,
-            current_state.auction_state(),
-            config.expected_error(),
         )
         .await;
         if config.expected_error.is_none() {
@@ -852,12 +858,16 @@ impl TestingEngine {
                             .expect("Auction accounts not found")
                     });
             let prepare_order_response_fixture = result.unwrap();
+            let payer_signer = config
+                .payer_signer
+                .clone()
+                .unwrap_or_else(|| self.testing_context.testing_actors.payer_signer.clone());
             let order_prepared_state = OrderPreparedState {
                 prepared_order_response_address: prepare_order_response_fixture
                     .prepared_order_response,
                 prepared_custody_token: prepare_order_response_fixture.prepared_custody_token,
                 base_fee_token: prepare_order_response_fixture.base_fee_token,
-                actor_enum: config.actor_enum,
+                prepared_by: payer_signer.pubkey(),
             };
             TestingEngineState::OrderPrepared {
                 base: current_state.base().clone(),
@@ -880,15 +890,19 @@ impl TestingEngine {
         current_state: &TestingEngineState,
         config: &PrepareOrderResponseInstructionConfig,
     ) -> TestingEngineState {
-        let auction_accounts = current_state
-            .auction_accounts()
-            .expect("Auction accounts not found");
+        let auction_accounts = config
+            .overwrite_auction_accounts
+            .as_ref()
+            .unwrap_or_else(|| {
+                current_state
+                    .auction_accounts()
+                    .expect("Auction accounts not found")
+            });
         let solver_token_account = config
             .actor_enum
             .get_actor(&self.testing_context.testing_actors)
             .token_account_address(&config.token_enum)
             .expect("Token account does not exist for solver at index");
-        println!("Base fee token address: {:?}", solver_token_account);
         let result = shimless::prepare_order_response::prepare_order_response(
             &self.testing_context,
             test_context,
@@ -899,12 +913,16 @@ impl TestingEngine {
         .await;
         if config.expected_error.is_none() {
             let prepare_order_response_fixture = result.unwrap();
+            let payer_signer = config
+                .payer_signer
+                .clone()
+                .unwrap_or_else(|| self.testing_context.testing_actors.payer_signer.clone());
             let order_prepared_state = OrderPreparedState {
                 prepared_order_response_address: prepare_order_response_fixture
                     .prepared_order_response,
                 prepared_custody_token: prepare_order_response_fixture.prepared_custody_token,
                 base_fee_token: prepare_order_response_fixture.base_fee_token,
-                actor_enum: config.actor_enum,
+                prepared_by: payer_signer.pubkey(),
             };
             TestingEngineState::OrderPrepared {
                 base: current_state.base().clone(),
@@ -955,7 +973,7 @@ impl TestingEngine {
         &self,
         test_context: &mut ProgramTestContext,
         current_state: &TestingEngineState,
-        config: &SettleAuctionNoneShimInstructionConfig,
+        config: &SettleAuctionNoneInstructionConfig,
     ) -> TestingEngineState {
         let auction_state = shimful::shims_settle_auction_none::settle_auction_none_shimful(
             &self.testing_context,
@@ -978,6 +996,37 @@ impl TestingEngine {
             _ => current_state.clone(),
         }
     }
+
+    /// Instruction trigger function for settling an auction none shimless
+    async fn settle_auction_none_shimless(
+        &self,
+        test_context: &mut ProgramTestContext,
+        current_state: &TestingEngineState,
+        config: &SettleAuctionNoneInstructionConfig,
+    ) -> TestingEngineState {
+        let auction_state = shimless::settle_auction_none::settle_auction_none_shimless(
+            &self.testing_context,
+            current_state,
+            test_context,
+            config,
+        )
+        .await;
+        match auction_state {
+            AuctionState::Settled => TestingEngineState::AuctionSettled {
+                base: current_state.base().clone(),
+                initialized: current_state.initialized().unwrap().clone(),
+                router_endpoints: current_state.router_endpoints().unwrap().clone(),
+                auction_state: current_state.auction_state().clone(),
+                fast_market_order: current_state.fast_market_order().cloned(),
+                order_prepared: current_state.order_prepared().unwrap().clone(),
+                auction_accounts: current_state.auction_accounts().cloned(),
+                order_executed: current_state.order_executed().cloned(),
+            },
+            _ => current_state.clone(),
+        }
+    }
+
+    /// Verfication trigger function for verifying an auction state
     async fn verify_auction_state(
         &self,
         test_context: &mut ProgramTestContext,
