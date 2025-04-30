@@ -153,7 +153,7 @@ pub fn read_keypair_from_file(filename: &str) -> Keypair {
 }
 
 /// Enum representing the different SPL token types
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SplTokenEnum {
     Usdc,
     Usdt,

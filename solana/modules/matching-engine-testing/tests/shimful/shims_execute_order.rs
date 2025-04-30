@@ -7,6 +7,7 @@ use anchor_spl::token::spl_token;
 use common::wormhole_cctp_solana::cctp::{
     MESSAGE_TRANSMITTER_PROGRAM_ID, TOKEN_MESSENGER_MINTER_PROGRAM_ID,
 };
+use matching_engine::accounts::CctpDepositForBurn;
 use matching_engine::fallback::execute_order::{ExecuteOrderCctpShim, ExecuteOrderShimAccounts};
 use solana_program_test::ProgramTestContext;
 use solana_sdk::{pubkey::Pubkey, signer::Signer, sysvar::SysvarId, transaction::Transaction};
@@ -255,6 +256,23 @@ pub struct CctpAccounts {
     pub remote_token_messenger: Pubkey,
     pub token_messenger_minter_program: Pubkey,
     pub message_transmitter_program: Pubkey,
+}
+
+impl Into<CctpDepositForBurn> for CctpAccounts {
+    fn into(self) -> CctpDepositForBurn {
+        CctpDepositForBurn {
+            mint: self.mint,
+            local_token: self.local_token,
+            token_messenger_minter_sender_authority: self.token_messenger_minter_sender_authority,
+            message_transmitter_config: self.message_transmitter_config,
+            token_messenger: self.token_messenger,
+            remote_token_messenger: self.remote_token_messenger,
+            token_minter: self.token_minter,
+            token_messenger_minter_event_authority: self.token_messenger_minter_event_authority,
+            message_transmitter_program: self.message_transmitter_program,
+            token_messenger_minter_program: self.token_messenger_minter_program,
+        }
+    }
 }
 
 pub fn create_cctp_accounts(

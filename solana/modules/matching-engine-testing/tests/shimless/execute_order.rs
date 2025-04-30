@@ -1,14 +1,13 @@
 use std::rc::Rc;
 
-use crate::testing_engine::config::{ExecuteOrderInstructionConfig, ExpectedError};
-use crate::testing_engine::setup::{TestingContext, TransferDirection};
-use crate::utils::account_fixtures::FixtureAccounts;
+use crate::shimful::shims_execute_order::create_cctp_accounts;
+use crate::testing_engine::config::{ExecuteOrderInstructionConfig, InstructionConfig};
+use crate::testing_engine::setup::TestingContext;
+use crate::testing_engine::state::TestingEngineState;
 use crate::utils::auction::{AuctionAccounts, AuctionState};
 use anchor_lang::prelude::*;
 use anchor_lang::{InstructionData, ToAccountMetas};
-use common::wormhole_cctp_solana::cctp::{
-    MESSAGE_TRANSMITTER_PROGRAM_ID, TOKEN_MESSENGER_MINTER_PROGRAM_ID,
-};
+
 use matching_engine::accounts::{CctpDepositForBurn, WormholePublishMessage};
 use matching_engine::accounts::{
     ExecuteFastOrderCctp as ExecuteOrderShimlessAccounts, LiquidityLayerVaa, LiveRouterEndpoint,
@@ -28,12 +27,23 @@ pub struct ExecuteOrderShimlessFixture {
 
 pub fn create_execute_order_shimless_accounts(
     testing_context: &TestingContext,
-    fixture_accounts: &FixtureAccounts,
     auction_accounts: &AuctionAccounts,
     payer_signer: &Rc<Keypair>,
     auction_state: &AuctionState,
-    executor_token: Pubkey,
+    config: &ExecuteOrderInstructionConfig,
+    current_state: &TestingEngineState,
 ) -> ExecuteOrderShimlessAccounts {
+    let executor_token = config
+        .actor_enum
+        .get_actor(&testing_context.testing_actors)
+        .token_account_address(&config.token_enum)
+        .unwrap_or_else(|| {
+            auction_state
+                .get_active_auction()
+                .unwrap()
+                .best_offer
+                .offer_token
+        });
     let active_auction_state = auction_state.get_active_auction().unwrap();
     let active_auction_address = active_auction_state.auction_address;
     let active_auction_custody_token = active_auction_state.auction_custody_token_address;
@@ -91,46 +101,8 @@ pub fn create_execute_order_shimless_accounts(
         clock: Clock::id(),
         rent: Rent::id(),
     };
-    let token_messenger_minter_event_authority =
-        Pubkey::find_program_address(&[EVENT_AUTHORITY_SEED], &TOKEN_MESSENGER_MINTER_PROGRAM_ID).0;
-    let local_token = Pubkey::find_program_address(
-        &[
-            b"local_token",
-            &testing_context.get_usdc_mint_address().to_bytes(),
-        ],
-        &TOKEN_MESSENGER_MINTER_PROGRAM_ID,
-    )
-    .0;
-    let token_messenger_minter_sender_authority =
-        Pubkey::find_program_address(&[b"sender_authority"], &TOKEN_MESSENGER_MINTER_PROGRAM_ID).0;
-    let message_transmitter_config =
-        Pubkey::find_program_address(&[b"message_transmitter"], &MESSAGE_TRANSMITTER_PROGRAM_ID).0;
-    let token_messenger =
-        Pubkey::find_program_address(&[b"token_messenger"], &TOKEN_MESSENGER_MINTER_PROGRAM_ID).0;
-    let remote_token_messenger = match testing_context.transfer_direction {
-        TransferDirection::FromEthereumToArbitrum => {
-            fixture_accounts.arbitrum_remote_token_messenger
-        }
-        TransferDirection::FromArbitrumToEthereum => {
-            fixture_accounts.ethereum_remote_token_messenger
-        }
-        _ => panic!("Unsupported transfer direction"),
-    };
-    let token_minter =
-        Pubkey::find_program_address(&[b"token_minter"], &TOKEN_MESSENGER_MINTER_PROGRAM_ID).0;
-    let cctp = CctpDepositForBurn {
-        mint: testing_context.get_usdc_mint_address(),
-        local_token,
-        token_messenger_minter_sender_authority,
-        message_transmitter_config,
-        token_messenger,
-        remote_token_messenger,
-        token_minter,
-        token_messenger_minter_event_authority,
-        message_transmitter_program: MESSAGE_TRANSMITTER_PROGRAM_ID,
-        token_messenger_minter_program: TOKEN_MESSENGER_MINTER_PROGRAM_ID,
-    };
 
+    let cctp = create_cctp_deposit_for_burn(current_state, testing_context);
     let event_authority = Pubkey::find_program_address(
         &[EVENT_AUTHORITY_SEED],
         &testing_context.get_matching_engine_program_id(),
@@ -156,42 +128,30 @@ pub fn create_execute_order_shimless_accounts(
 pub async fn execute_order_shimless_test(
     testing_context: &TestingContext,
     test_context: &mut ProgramTestContext,
+    current_state: &TestingEngineState,
     config: &ExecuteOrderInstructionConfig,
     auction_accounts: &AuctionAccounts,
-    auction_state: &AuctionState,
-    expected_error: Option<&ExpectedError>,
 ) -> Option<ExecuteOrderShimlessFixture> {
     let payer_signer = config
         .payer_signer
         .clone()
         .unwrap_or_else(|| testing_context.testing_actors.payer_signer.clone());
+    let auction_state = current_state.auction_state();
+    let expected_error = config.expected_error();
     let slots_to_fast_forward = config.fast_forward_slots;
     if slots_to_fast_forward > 0 {
         crate::testing_engine::engine::fast_forward_slots(test_context, slots_to_fast_forward)
             .await;
     }
-    let executor_token = config
-        .actor_enum
-        .get_actor(&testing_context.testing_actors)
-        .token_account_address(&config.token_enum)
-        .unwrap_or_else(|| {
-            auction_state
-                .get_active_auction()
-                .unwrap()
-                .best_offer
-                .offer_token
-        });
-    let fixture_accounts = testing_context
-        .get_fixture_accounts()
-        .expect("Fixture accounts not found");
+
     let execute_order_accounts: ExecuteOrderShimlessAccounts =
         create_execute_order_shimless_accounts(
             testing_context,
-            &fixture_accounts,
             auction_accounts,
             &payer_signer,
             auction_state,
-            executor_token,
+            config,
+            current_state,
         );
     let execute_order_instruction_data = ExecuteOrderShimlessInstruction {}.data();
     let execute_order_ix = Instruction {
@@ -218,4 +178,12 @@ pub async fn execute_order_shimless_test(
     } else {
         None
     }
+}
+
+pub fn create_cctp_deposit_for_burn(
+    current_state: &TestingEngineState,
+    testing_context: &TestingContext,
+) -> CctpDepositForBurn {
+    let cctp_accounts = create_cctp_accounts(current_state, testing_context);
+    cctp_accounts.into()
 }
