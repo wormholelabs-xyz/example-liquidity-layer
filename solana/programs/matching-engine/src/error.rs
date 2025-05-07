@@ -87,6 +87,28 @@ pub enum MatchingEngineError {
     CannotCloseAuctionYet = 0x500,
     AuctionHistoryNotFull = 0x502,
     AuctionHistoryFull = 0x504,
+
+    InvalidVerifyVaaShimProgram = 0x600,
+
+    // Fallback matching engine errors
+    AccountAlreadyInitialized = 0x700,
+    AccountNotWritable = 0x702,
+    BorshDeserializationError = 0x704,
+    BorshSerializationError = 0x705,
+    InvalidPda = 0x706,
+    InvalidProgram = 0x70a,
+    TokenTransferFailed = 0x70c,
+    InvalidMint = 0x70e,
+
+    // Place initial offer errors
+    #[msg("From and to router endpoints are the same")]
+    SameEndpoints = 0x800,
+
+    // Close fast market order errors
+    MismatchingCloseAccountRefundRecipient = 0xa10,
+
+    // Execute order errors
+    InvalidCctpMessage = 0x902,
 }
 
 #[cfg(test)]
