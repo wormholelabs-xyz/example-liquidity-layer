@@ -1,6 +1,11 @@
-use crate::testing_engine::config::ExpectedError;
+use crate::testing_engine::config::{
+    ExpectedError, InitializeFastMarketOrderShimInstructionConfig,
+};
+use crate::testing_engine::state::{
+    FastMarketOrderAccountCreatedState, GuardianSetState, TestingEngineState,
+};
 
-use super::verify_shim::GuardianSignatureInfo;
+use super::verify_shim::{create_guardian_signatures, GuardianSignatureInfo};
 use crate::testing_engine::setup::TestingContext;
 use crate::utils;
 use common::messages::FastMarketOrder;
@@ -28,37 +33,65 @@ use wormhole_io::TypePrefixedPayload;
 /// # Arguments
 ///
 /// * `testing_context` - The testing context
-/// * `payer_signer` - The payer signer keypair
-/// * `fast_market_order` - The fast market order state
-/// * `guardian_set_pubkey` - The guardian set pubkey
-/// * `guardian_signatures_pubkey` - The guardian signatures pubkey
-/// * `guardian_set_bump` - The guardian set bump
+/// * `test_context` - The program test context
 /// * `expected_error` - The expected error
+/// * `current_state` - The current testing engine state
+/// * `config` - The initialization configuration
 ///
-/// # Asserts
+/// # Returns
 ///
-/// * The expected error, if any, is reached when executing the instruction
-pub async fn initialize_fast_market_order_fallback(
+/// * `TestingEngineState` - The updated testing engine state
+pub async fn initialize_fast_market_order_shimful(
     testing_context: &TestingContext,
     test_context: &mut ProgramTestContext,
-    payer_signer: &Rc<Keypair>,
-    fast_market_order: FastMarketOrderState,
-    guardian_signature_info: &GuardianSignatureInfo,
     expected_error: Option<&ExpectedError>,
-) {
+    current_state: &TestingEngineState,
+    config: &InitializeFastMarketOrderShimInstructionConfig,
+) -> TestingEngineState {
     let program_id = &testing_context.get_matching_engine_program_id();
-    let initialize_fast_market_order_ix = initialize_fast_market_order_fallback_instruction(
-        payer_signer,
+    let test_vaa_pair = current_state.get_test_vaa_pair(config.vaa_index);
+    let fast_transfer_vaa = test_vaa_pair.fast_transfer_vaa.clone();
+    let fast_market_order = create_fast_market_order_state_from_vaa_data(
+        &fast_transfer_vaa.vaa_data,
+        config
+            .close_account_refund_recipient
+            .unwrap_or_else(|| testing_context.testing_actors.solvers[0].pubkey()),
+    );
+    let payer_signer = config
+        .payer_signer
+        .clone()
+        .unwrap_or_else(|| testing_context.testing_actors.payer_signer.clone());
+    let guardian_signature_info = create_guardian_signatures(
+        &testing_context,
+        test_context,
+        &payer_signer,
+        &fast_transfer_vaa.vaa_data,
+        &testing_context.get_wormhole_program_id(),
+        None,
+    )
+    .await
+    .expect("Failed to create guardian signatures");
+
+    let (fast_market_order_account, fast_market_order_bump) = Pubkey::find_program_address(
+        &[
+            FastMarketOrderState::SEED_PREFIX,
+            &fast_market_order.digest(),
+            &fast_market_order.close_account_refund_recipient.as_ref(),
+        ],
+        program_id,
+    );
+    let initialize_fast_market_order_ix = initialize_fast_market_order_shimful_instruction(
+        &payer_signer,
         program_id,
         fast_market_order,
-        guardian_signature_info,
+        &guardian_signature_info,
     );
     let transaction = testing_context
         .create_transaction(
             test_context,
             &[initialize_fast_market_order_ix],
             Some(&payer_signer.pubkey()),
-            &[payer_signer],
+            &[&payer_signer],
             1000000000,
             1000000000,
         )
@@ -66,6 +99,28 @@ pub async fn initialize_fast_market_order_fallback(
     testing_context
         .execute_and_verify_transaction(test_context, transaction, expected_error)
         .await;
+    if config.expected_error.is_none() {
+        TestingEngineState::FastMarketOrderAccountCreated {
+            base: current_state.base().clone(),
+            initialized: current_state.initialized().unwrap().clone(),
+            router_endpoints: current_state.router_endpoints().cloned(),
+            fast_market_order: FastMarketOrderAccountCreatedState {
+                fast_market_order_address: fast_market_order_account,
+                fast_market_order_bump,
+                fast_market_order,
+                close_account_refund_recipient: fast_market_order.close_account_refund_recipient,
+            },
+            guardian_set_state: GuardianSetState {
+                guardian_set_address: guardian_signature_info.guardian_set_pubkey,
+                guardian_signatures_address: guardian_signature_info.guardian_signatures_pubkey,
+            },
+            auction_state: current_state.auction_state().clone(),
+            auction_accounts: current_state.auction_accounts().cloned(),
+            order_prepared: current_state.order_prepared().cloned(),
+        }
+    } else {
+        current_state.clone()
+    }
 }
 
 /// Creates the initialize fast market order fallback instruction
@@ -77,14 +132,12 @@ pub async fn initialize_fast_market_order_fallback(
 /// * `payer_signer` - The payer signer keypair
 /// * `program_id` - The program id
 /// * `fast_market_order` - The fast market order state
-/// * `guardian_set_pubkey` - The guardian set pubkey
-/// * `guardian_signatures_pubkey` - The guardian signatures pubkey
-/// * `guardian_set_bump` - The guardian set bump
+/// * `guardian_signature_info` - Information about guardian signatures
 ///
 /// # Returns
 ///
 /// * `Instruction` - The initialize fast market order fallback instruction
-fn initialize_fast_market_order_fallback_instruction(
+pub fn initialize_fast_market_order_shimful_instruction(
     payer_signer: &Rc<Keypair>,
     program_id: &Pubkey,
     fast_market_order: FastMarketOrderState,
@@ -127,7 +180,8 @@ fn initialize_fast_market_order_fallback_instruction(
 /// # Arguments
 ///
 /// * `testing_context` - The testing context
-/// * `refund_recipient_keypair` - The refund recipient keypair that will receive the refund after closing the fast market order account
+/// * `test_context` - The program test context
+/// * `refund_recipient_keypair` - The refund recipient keypair that will receive the refund
 /// * `fast_market_order_address` - The fast market order account address
 /// * `expected_error` - The expected error
 ///
