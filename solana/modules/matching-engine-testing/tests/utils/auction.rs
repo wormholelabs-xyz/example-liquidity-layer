@@ -47,7 +47,7 @@ pub struct AuctionAccounts {
 pub enum AuctionState {
     Active(Box<ActiveAuctionState>),
     Paused(Box<ActiveAuctionState>),
-    Settled,
+    Settled(Box<ActiveAuctionState>),
     Inactive,
 }
 
@@ -57,7 +57,7 @@ impl AuctionState {
             AuctionState::Active(auction) => Some(auction),
             AuctionState::Paused(auction) => Some(auction),
             AuctionState::Inactive => None,
-            AuctionState::Settled => None,
+            AuctionState::Settled(auction) => Some(auction),
         }
     }
 
@@ -421,7 +421,7 @@ impl ActiveAuctionState {
 ///
 /// # Fields
 ///
-/// * `participant` - The participant of the offer
+/// * `participant` - The participant of the offer (the signer of the transaction)
 /// * `offer_token` - The token of the offer
 /// * `offer_price` - The price of the offer
 #[derive(Clone, Default)]
