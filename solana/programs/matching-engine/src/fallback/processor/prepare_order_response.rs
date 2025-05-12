@@ -1,27 +1,32 @@
 use std::io::Cursor;
 
-use super::helpers::{create_account_reliably, VaaMessageBodyHeader};
-use super::FallbackMatchingEngineInstruction;
-use crate::fallback::helpers::create_usdc_token_account_reliably;
-use crate::fallback::helpers::require_min_account_infos_len;
-use crate::state::PreparedOrderResponseInfo;
-use crate::state::PreparedOrderResponseSeeds;
-use crate::state::{Custodian, MessageProtocol, PreparedOrderResponse, RouterEndpoint};
-use crate::CCTP_MINT_RECIPIENT;
-use crate::ID;
+use super::{
+    helpers::{create_account_reliably, VaaMessageBodyHeader},
+    FallbackMatchingEngineInstruction,
+};
+use crate::{
+    fallback::helpers::{create_usdc_token_account_reliably, require_min_account_infos_len},
+    state::{
+        Custodian, MessageProtocol, PreparedOrderResponse, PreparedOrderResponseInfo,
+        PreparedOrderResponseSeeds,
+    },
+    CCTP_MINT_RECIPIENT, ID,
+};
 use anchor_lang::prelude::*;
 use anchor_spl::token::spl_token;
-use common::messages::SlowOrderResponse;
-use common::wormhole_cctp_solana::cctp::message_transmitter_program;
-use common::wormhole_cctp_solana::cpi::ReceiveMessageArgs;
-use common::wormhole_cctp_solana::messages::Deposit;
-use common::wormhole_cctp_solana::utils::CctpMessage;
-use common::wormhole_io::TypePrefixedPayload;
+use common::{
+    messages::SlowOrderResponse,
+    wormhole_cctp_solana::{
+        cctp::message_transmitter_program, cpi::ReceiveMessageArgs, messages::Deposit,
+        utils::CctpMessage,
+    },
+    wormhole_io::TypePrefixedPayload,
+    USDC_MINT,
+};
 use ruint::aliases::U256;
-use solana_program::instruction::Instruction;
-use solana_program::keccak;
-use solana_program::program::invoke_signed_unchecked;
+use solana_program::{instruction::Instruction, keccak, program::invoke_signed_unchecked};
 use wormhole_io::WriteableBytes;
+use wormhole_svm_shim::verify_vaa::{VerifyHash, VerifyHashAccounts, VerifyHashData};
 
 use crate::error::MatchingEngineError;
 
@@ -103,44 +108,10 @@ pub struct PrepareOrderResponseCctpShimAccounts<'ix> {
     pub cctp_message_transmitter_program: &'ix Pubkey,            // 22
     pub guardian_set: &'ix Pubkey,                                // 23
     pub guardian_set_signatures: &'ix Pubkey,                     // 24
-    pub verify_shim_program: &'ix Pubkey,                         // 25
-    pub token_program: &'ix Pubkey,                               // 26
-    pub system_program: &'ix Pubkey,                              // 27
-}
-
-impl<'ix> PrepareOrderResponseCctpShimAccounts<'ix> {
-    pub fn to_account_metas(&self) -> Vec<AccountMeta> {
-        vec![
-            AccountMeta::new(*self.signer, true),
-            AccountMeta::new_readonly(*self.custodian, false),
-            AccountMeta::new_readonly(*self.fast_market_order, false),
-            AccountMeta::new_readonly(*self.from_endpoint, false),
-            AccountMeta::new_readonly(*self.to_endpoint, false),
-            AccountMeta::new(*self.prepared_order_response, false),
-            AccountMeta::new(*self.prepared_custody_token, false),
-            AccountMeta::new_readonly(*self.base_fee_token, false),
-            AccountMeta::new_readonly(*self.usdc, false),
-            AccountMeta::new(*self.cctp_mint_recipient, false),
-            AccountMeta::new_readonly(*self.cctp_message_transmitter_authority, false),
-            AccountMeta::new_readonly(*self.cctp_message_transmitter_config, false),
-            AccountMeta::new(*self.cctp_used_nonces, false),
-            AccountMeta::new_readonly(*self.cctp_message_transmitter_event_authority, false),
-            AccountMeta::new_readonly(*self.cctp_token_messenger, false),
-            AccountMeta::new_readonly(*self.cctp_remote_token_messenger, false),
-            AccountMeta::new_readonly(*self.cctp_token_minter, false),
-            AccountMeta::new(*self.cctp_local_token, false),
-            AccountMeta::new_readonly(*self.cctp_token_pair, false),
-            AccountMeta::new(*self.cctp_token_messenger_minter_custody_token, false),
-            AccountMeta::new_readonly(*self.cctp_token_messenger_minter_event_authority, false),
-            AccountMeta::new_readonly(*self.cctp_token_messenger_minter_program, false),
-            AccountMeta::new_readonly(*self.cctp_message_transmitter_program, false),
-            AccountMeta::new_readonly(*self.guardian_set, false),
-            AccountMeta::new_readonly(*self.guardian_set_signatures, false),
-            AccountMeta::new_readonly(*self.verify_shim_program, false),
-            AccountMeta::new_readonly(*self.token_program, false),
-            AccountMeta::new_readonly(*self.system_program, false),
-        ]
-    }
+    // TODO: Remove these
+    pub verify_shim_program: &'ix Pubkey, // 25
+    pub token_program: &'ix Pubkey,       // 26
+    pub system_program: &'ix Pubkey,      // 27
 }
 
 pub struct PrepareOrderResponseCctpShim<'ix> {
@@ -151,9 +122,71 @@ pub struct PrepareOrderResponseCctpShim<'ix> {
 
 impl<'ix> PrepareOrderResponseCctpShim<'ix> {
     pub fn instruction(self) -> Instruction {
+        let PrepareOrderResponseCctpShimAccounts {
+            signer,
+            custodian,
+            fast_market_order,
+            from_endpoint,
+            to_endpoint,
+            prepared_order_response,
+            prepared_custody_token,
+            base_fee_token,
+            usdc,
+            cctp_mint_recipient,
+            cctp_message_transmitter_authority,
+            cctp_message_transmitter_config,
+            cctp_used_nonces,
+            cctp_message_transmitter_event_authority,
+            cctp_token_messenger,
+            cctp_remote_token_messenger,
+            cctp_token_minter,
+            cctp_local_token,
+            cctp_token_pair,
+            cctp_token_messenger_minter_custody_token,
+            cctp_token_messenger_minter_event_authority,
+            cctp_token_messenger_minter_program,
+            cctp_message_transmitter_program,
+            guardian_set,
+            guardian_set_signatures,
+            verify_shim_program: _,
+            token_program: _,
+            system_program: _,
+        } = self.accounts;
         Instruction {
             program_id: *self.program_id,
-            accounts: self.accounts.to_account_metas(),
+            accounts: vec![
+                AccountMeta::new(*signer, true),
+                AccountMeta::new_readonly(*custodian, false),
+                AccountMeta::new_readonly(*fast_market_order, false),
+                AccountMeta::new_readonly(*from_endpoint, false),
+                AccountMeta::new_readonly(*to_endpoint, false),
+                AccountMeta::new(*prepared_order_response, false),
+                AccountMeta::new(*prepared_custody_token, false),
+                AccountMeta::new_readonly(*base_fee_token, false),
+                AccountMeta::new_readonly(*usdc, false),
+                AccountMeta::new(*cctp_mint_recipient, false),
+                AccountMeta::new_readonly(*cctp_message_transmitter_authority, false),
+                AccountMeta::new_readonly(*cctp_message_transmitter_config, false),
+                AccountMeta::new(*cctp_used_nonces, false),
+                AccountMeta::new_readonly(*cctp_message_transmitter_event_authority, false),
+                AccountMeta::new_readonly(*cctp_token_messenger, false),
+                AccountMeta::new_readonly(*cctp_remote_token_messenger, false),
+                AccountMeta::new_readonly(*cctp_token_minter, false),
+                AccountMeta::new(*cctp_local_token, false),
+                AccountMeta::new_readonly(*cctp_token_pair, false),
+                AccountMeta::new(*cctp_token_messenger_minter_custody_token, false),
+                AccountMeta::new_readonly(*cctp_token_messenger_minter_event_authority, false),
+                AccountMeta::new_readonly(*cctp_token_messenger_minter_program, false),
+                AccountMeta::new_readonly(*cctp_message_transmitter_program, false),
+                AccountMeta::new_readonly(*guardian_set, false),
+                AccountMeta::new_readonly(*guardian_set_signatures, false),
+                AccountMeta::new_readonly(
+                    wormhole_svm_definitions::solana::VERIFY_VAA_SHIM_PROGRAM_ID,
+                    false,
+                ),
+                AccountMeta::new_readonly(spl_token::ID, false),
+                AccountMeta::new_readonly(solana_program::system_program::ID, false),
+            ],
             data: FallbackMatchingEngineInstruction::PrepareOrderResponseCctpShim(self.data)
                 .to_vec(),
         }
@@ -168,113 +201,34 @@ pub fn prepare_order_response_cctp_shim(
     require_min_account_infos_len(accounts, 27)?;
 
     let signer = &accounts[0];
-    let custodian = &accounts[1];
+
+    let cctp_account_infos = &accounts[9..23];
+
+    // Load the fast market order account and check the owner
     let fast_market_order = &accounts[2];
-    let from_endpoint = &accounts[3];
-    let to_endpoint = &accounts[4];
-    let prepared_order_response = &accounts[5];
-    let prepared_custody_token = &accounts[6];
-    let base_fee_token = &accounts[7];
-    let usdc = &accounts[8];
-    let cctp_mint_recipient = &accounts[9];
-    let cctp_message_transmitter_authority = &accounts[10];
-    let cctp_message_transmitter_config = &accounts[11];
-    let cctp_used_nonces = &accounts[12];
-    let cctp_message_transmitter_event_authority = &accounts[13];
-    let cctp_token_messenger = &accounts[14];
-    let cctp_remote_token_messenger = &accounts[15];
-    let cctp_token_minter = &accounts[16];
-    let cctp_local_token = &accounts[17];
-    let cctp_token_pair = &accounts[18];
-    let cctp_token_messenger_minter_custody_token = &accounts[19];
-    let cctp_token_messenger_minter_event_authority = &accounts[20];
-    let cctp_token_messenger_minter_program = &accounts[21];
-    let cctp_message_transmitter_program = &accounts[22];
-    let guardian_set = &accounts[23];
-    let guardian_set_signatures = &accounts[24];
-    let verify_shim_program = &accounts[25];
-    let token_program = &accounts[26];
-    let system_program = &accounts[27];
-    let receive_message_args = data.to_receive_message_args();
-    let finalized_vaa_message_args = data.finalized_vaa_message_args;
-
-    let cctp_message = CctpMessage::parse(&receive_message_args.encoded_message)
-        .map_err(|_| MatchingEngineError::InvalidCctpMessage)?;
-
-    // Load accounts
     let fast_market_order_zero_copy =
         super::helpers::try_fast_market_order_account(fast_market_order)?;
     // Create pdas for addresses that need to be created
     // Check the prepared order response account is valid
     let fast_market_order_digest = fast_market_order_zero_copy.digest();
 
-    require_eq!(
-        cctp_mint_recipient.key(),
-        CCTP_MINT_RECIPIENT,
-        MatchingEngineError::InvalidMintRecipient
-    );
-
-    // Check that fast market order is owned by the program
-    require!(
-        fast_market_order.owner == program_id,
-        ErrorCode::ConstraintOwner
-    );
-
-    // Check custodian owner
-    super::helpers::require_owned_by_this_program(custodian, "custodian")?;
-    // Check that custodian deserializes correctly
-    let _checked_custodian =
-        Custodian::try_deserialize(&mut &custodian.data.borrow()[..]).map(Box::new)?;
+    // Check custodian owner and that it deserializes correctly
+    let custodian = &accounts[1];
+    let _checked_custodian = super::helpers::try_custodian_account(custodian, false)?;
     // Deserialize the to_endpoint account
 
-    let to_endpoint_account =
-        RouterEndpoint::try_deserialize(&mut &to_endpoint.data.borrow()[..]).map(Box::new)?;
-    // Deserialize the from_endpoint account
-    let from_endpoint_account =
-        RouterEndpoint::try_deserialize(&mut &from_endpoint.data.borrow()[..]).map(Box::new)?;
-
-    let guardian_set_bump = finalized_vaa_message_args.guardian_set_bump;
-
-    let prepared_order_response_seeds = [
-        PreparedOrderResponse::SEED_PREFIX,
-        &fast_market_order_digest,
-    ];
-
-    let (prepared_order_response_pda, prepared_order_response_bump) =
-        Pubkey::find_program_address(&prepared_order_response_seeds, program_id);
-
-    let prepared_custody_token_seeds = [
-        crate::PREPARED_CUSTODY_TOKEN_SEED_PREFIX,
-        prepared_order_response_pda.as_ref(),
-    ];
-
-    let (prepared_custody_token_pda, prepared_custody_token_bump) =
-        Pubkey::find_program_address(&prepared_custody_token_seeds, program_id);
+    let from_endpoint = &accounts[3];
+    let to_endpoint = &accounts[4];
+    let (to_endpoint_router, from_endpoint_router) =
+        super::helpers::try_live_endpoint_accounts_path(to_endpoint, from_endpoint)?;
 
     // Check usdc mint
-    require_eq!(
-        usdc.key(),
-        common::USDC_MINT,
-        MatchingEngineError::InvalidMint
-    );
-
-    // Check from_endpoint owner
-    require_eq!(from_endpoint.owner, program_id, ErrorCode::ConstraintOwner);
-
-    // Check to_endpoint owner
-    require_eq!(to_endpoint.owner, program_id, ErrorCode::ConstraintOwner);
-
-    // Check that the from and to endpoints are different
-    require_neq!(
-        from_endpoint_account.chain,
-        to_endpoint_account.chain,
-        MatchingEngineError::SameEndpoint
-    );
+    super::helpers::try_usdc_account(&accounts[8])?;
 
     // Check that the to endpoint protocol is cctp or local
     require!(
         matches!(
-            to_endpoint_account.protocol,
+            to_endpoint_router.protocol,
             MessageProtocol::Cctp { .. } | MessageProtocol::Local { .. }
         ),
         MatchingEngineError::InvalidEndpoint
@@ -282,53 +236,28 @@ pub fn prepare_order_response_cctp_shim(
 
     // Check that to endpoint chain is equal to the fast_market_order target_chain
     require_eq!(
-        to_endpoint_account.chain,
+        to_endpoint_router.chain,
         fast_market_order_zero_copy.target_chain,
         MatchingEngineError::InvalidTargetRouter
     );
 
-    // Check that the prepared order response pda is equal to the prepared order response account key
-    require_eq!(
-        prepared_order_response_pda,
-        prepared_order_response.key(),
-        MatchingEngineError::InvalidPda
-    );
-
-    // Check that the prepared custody token pda is equal to the prepared custody token account key
-    require_eq!(
-        prepared_custody_token_pda,
-        prepared_custody_token.key(),
-        MatchingEngineError::InvalidPda
-    );
-
     // Check the base token fee key is not equal to the prepared custody token key
     // TODO: Check that base fee token is actually a token account
+    let prepared_custody_token = &accounts[6];
+    let base_fee_token = &accounts[7];
     require_neq!(
-        base_fee_token.key(),
-        prepared_custody_token.key(),
+        base_fee_token.key,
+        prepared_custody_token.key,
         MatchingEngineError::InvalidBaseFeeToken
     );
 
-    require_eq!(
-        token_program.key(),
-        spl_token::ID,
-        MatchingEngineError::InvalidProgram
-    );
-
-    require_eq!(
-        verify_shim_program.key(),
-        wormhole_svm_definitions::solana::VERIFY_VAA_SHIM_PROGRAM_ID,
-        MatchingEngineError::InvalidProgram
-    );
-
-    require_eq!(
-        system_program.key(),
-        solana_program::system_program::ID,
-        MatchingEngineError::InvalidProgram
-    );
+    let finalized_vaa_message_args = &data.finalized_vaa_message_args;
+    let receive_message_args = data.to_receive_message_args();
 
     // Construct the finalized vaa message digest data
     let finalized_vaa_message_digest = {
+        let cctp_message = CctpMessage::parse(&receive_message_args.encoded_message)
+            .map_err(|_| MatchingEngineError::InvalidCctpMessage)?;
         let finalized_vaa_timestamp = fast_market_order_zero_copy.vaa_timestamp;
         let finalized_vaa_sequence = fast_market_order_zero_copy.vaa_sequence.saturating_sub(1);
         let finalized_vaa_emitter_chain = fast_market_order_zero_copy.vaa_emitter_chain;
@@ -338,13 +267,13 @@ pub fn prepare_order_response_cctp_shim(
             base_fee: finalized_vaa_message_args.base_fee,
         };
         let deposit_vaa_payload = Deposit {
-            token_address: usdc.key().to_bytes(),
+            token_address: USDC_MINT.to_bytes(),
             amount: U256::from(fast_market_order_zero_copy.amount_in),
             source_cctp_domain: cctp_message.source_domain(),
             destination_cctp_domain: cctp_message.destination_domain(),
             cctp_nonce: cctp_message.nonce(),
-            burn_source: from_endpoint_account.mint_recipient,
-            mint_recipient: cctp_mint_recipient.key().to_bytes(),
+            burn_source: from_endpoint_router.mint_recipient,
+            mint_recipient: CCTP_MINT_RECIPIENT.to_bytes(),
             payload: WriteableBytes::new(slow_order_response.to_vec()),
         };
 
@@ -364,25 +293,28 @@ pub fn prepare_order_response_cctp_shim(
 
     // Start verify deposit message vaa shim
     // ------------------------------------------------------------------------------------------------
-    let verify_hash_data = {
-        let mut data = vec![];
-        data.extend_from_slice(
-            &wormhole_svm_shim::verify_vaa::VerifyVaaShimInstruction::<false>::VERIFY_HASH_SELECTOR,
-        );
-        data.push(guardian_set_bump);
-        data.extend_from_slice(&finalized_vaa_message_digest);
-        data
+    let guardian_set = &accounts[23];
+    let guardian_set_signatures = &accounts[24];
+    let guardian_set_bump = finalized_vaa_message_args.guardian_set_bump;
+
+    let verify_hash_data = VerifyHashData::new(
+        guardian_set_bump,
+        keccak::Hash::new_from_array(finalized_vaa_message_digest),
+    );
+
+    let verify_hash_accounts = VerifyHashAccounts {
+        guardian_set: guardian_set.key,
+        guardian_signatures: guardian_set_signatures.key,
     };
 
-    let verify_shim_ix = Instruction {
-        program_id: wormhole_svm_definitions::solana::VERIFY_VAA_SHIM_PROGRAM_ID,
-        accounts: vec![
-            AccountMeta::new_readonly(guardian_set.key(), false),
-            AccountMeta::new_readonly(guardian_set_signatures.key(), false),
-        ],
+    let verify_hash_ix = VerifyHash {
+        program_id: &wormhole_svm_definitions::solana::VERIFY_VAA_SHIM_PROGRAM_ID,
+        accounts: verify_hash_accounts,
         data: verify_hash_data,
-    };
-    invoke_signed_unchecked(&verify_shim_ix, accounts, &[])?;
+    }
+    .instruction();
+
+    invoke_signed_unchecked(&verify_hash_ix, accounts, &[])?;
     // End verify deposit message vaa shim
     // ------------------------------------------------------------------------------------------------
 
@@ -395,18 +327,44 @@ pub fn prepare_order_response_cctp_shim(
     // * settle_auction_complete
     // * settle_auction_none
 
+    let prepared_order_response_seeds = [
+        PreparedOrderResponse::SEED_PREFIX,
+        &fast_market_order_digest,
+    ];
+
+    let (expected_prepared_order_response_key, prepared_order_response_bump) =
+        Pubkey::find_program_address(&prepared_order_response_seeds, program_id);
+
+    let prepared_custody_token_seeds = [
+        crate::PREPARED_CUSTODY_TOKEN_SEED_PREFIX,
+        expected_prepared_order_response_key.as_ref(),
+    ];
+
+    let (prepared_custody_token_pda, prepared_custody_token_bump) =
+        Pubkey::find_program_address(&prepared_custody_token_seeds, program_id);
+
+    // Check that the prepared custody token pda is equal to the prepared custody token account key
+    require_keys_eq!(
+        prepared_custody_token_pda,
+        *prepared_custody_token.key,
+        MatchingEngineError::InvalidPda
+    );
+
     let create_prepared_order_respone_seeds = [
         PreparedOrderResponse::SEED_PREFIX,
         &fast_market_order_digest,
         &[prepared_order_response_bump],
     ];
+
+    let prepared_order_response = &accounts[5];
+
     let prepared_order_response_signer_seeds = &[&create_prepared_order_respone_seeds[..]];
     let prepared_order_response_account_space = PreparedOrderResponse::compute_size(
         fast_market_order_zero_copy.redeemer_message_length.into(),
     );
     create_account_reliably(
-        &signer.key(),
-        &prepared_order_response.key(),
+        &signer.key,
+        &expected_prepared_order_response_key,
         prepared_order_response.lamports(),
         prepared_order_response_account_space,
         accounts,
@@ -420,8 +378,8 @@ pub fn prepare_order_response_cctp_shim(
             bump: prepared_order_response_bump,
         },
         info: PreparedOrderResponseInfo {
-            prepared_by: signer.key(),
-            base_fee_token: base_fee_token.key(),
+            prepared_by: *signer.key,
+            base_fee_token: *base_fee_token.key,
             source_chain: fast_market_order_zero_copy.vaa_emitter_chain,
             base_fee: finalized_vaa_message_args.base_fee,
             fast_vaa_timestamp: fast_market_order_zero_copy.vaa_timestamp,
@@ -430,7 +388,7 @@ pub fn prepare_order_response_cctp_shim(
             redeemer: fast_market_order_zero_copy.redeemer,
             init_auction_fee: fast_market_order_zero_copy.init_auction_fee,
         },
-        to_endpoint: to_endpoint_account.info,
+        to_endpoint: to_endpoint_router.info,
         redeemer_message: fast_market_order_zero_copy.redeemer_message
             [..usize::from(fast_market_order_zero_copy.redeemer_message_length)]
             .to_vec(),
@@ -450,15 +408,15 @@ pub fn prepare_order_response_cctp_shim(
     // ------------------------------------------------------------------------------------------------
     let create_prepared_custody_token_seeds = [
         crate::PREPARED_CUSTODY_TOKEN_SEED_PREFIX,
-        prepared_order_response_pda.as_ref(),
+        expected_prepared_order_response_key.as_ref(),
         &[prepared_custody_token_bump],
     ];
 
     let prepared_custody_token_signer_seeds = &[&create_prepared_custody_token_seeds[..]];
     create_usdc_token_account_reliably(
-        &signer.key(),
+        &signer.key,
         &prepared_custody_token_pda,
-        &prepared_order_response_pda,
+        &expected_prepared_order_response_key,
         prepared_custody_token.lamports(),
         accounts,
         prepared_custody_token_signer_seeds,
@@ -466,7 +424,27 @@ pub fn prepare_order_response_cctp_shim(
 
     // End create prepared custody token account
     // ------------------------------------------------------------------------------------------------
-
+    let cctp_mint_recipient = &cctp_account_infos[0];
+    require_keys_eq!(
+        *cctp_mint_recipient.key,
+        CCTP_MINT_RECIPIENT,
+        MatchingEngineError::InvalidMintRecipient
+    );
+    let cctp_message_transmitter_authority = &cctp_account_infos[1];
+    let cctp_message_transmitter_config = &cctp_account_infos[2];
+    let cctp_used_nonces = &cctp_account_infos[3];
+    let cctp_message_transmitter_event_authority = &cctp_account_infos[4];
+    let cctp_token_messenger = &cctp_account_infos[5];
+    let cctp_remote_token_messenger = &cctp_account_infos[6];
+    let cctp_token_minter = &cctp_account_infos[7];
+    let cctp_local_token = &cctp_account_infos[8];
+    let cctp_token_pair = &cctp_account_infos[9];
+    let cctp_token_messenger_minter_custody_token = &cctp_account_infos[10];
+    let cctp_token_messenger_minter_event_authority = &cctp_account_infos[11];
+    let cctp_token_messenger_minter_program = &cctp_account_infos[12];
+    let cctp_message_transmitter_program = &cctp_account_infos[13];
+    let token_program = &accounts[26];
+    let system_program = &accounts[27];
     // Create cpi context for verify_vaa_and_mint
     message_transmitter_program::cpi::receive_token_messenger_minter_message(
         CpiContext::new_with_signer(
@@ -502,9 +480,9 @@ pub fn prepare_order_response_cctp_shim(
     // Finally transfer minted via CCTP to prepared custody token.
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::ID,
-        &cctp_mint_recipient.key(),
-        &prepared_custody_token.key(),
-        &custodian.key(),
+        &cctp_mint_recipient.key,
+        &prepared_custody_token.key,
+        &custodian.key,
         &[], // Apparently this is only for multi-sig accounts
         fast_market_order_zero_copy.amount_in,
     )
