@@ -22,6 +22,7 @@ pub struct PlaceInitialOfferCctpShimData {
     pub offer_price: u64,
 }
 
+// TODO: Rename to "PlaceInitialOfferCctpV2Accounts".
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct PlaceInitialOfferCctpShimAccounts<'ix> {
     /// The signer account
@@ -58,6 +59,7 @@ pub struct PlaceInitialOfferCctpShimAccounts<'ix> {
     pub token_program: &'ix Pubkey,
 }
 
+// TODO: Rename to "PlaceInitialOfferCctpV2".
 #[derive(Debug, Clone, Copy)]
 pub struct PlaceInitialOfferCctpShim<'ix> {
     pub program_id: &'ix Pubkey,
@@ -199,7 +201,7 @@ pub fn process(accounts: &[AccountInfo], data: &PlaceInitialOfferCctpShimData) -
     // TODO: Double-check that we do not need verify the derived pubkey is
     // correct. We shouldn't have to because the seeds are used to create the
     // account, which will only work if the auction custody pubkey is correct.
-    let (_, new_auction_custody_bump) = Pubkey::find_program_address(
+    let (expected_auction_custody_key, new_auction_custody_bump) = Pubkey::find_program_address(
         &[
             crate::AUCTION_CUSTODY_TOKEN_SEED_PREFIX,
             new_auction_key.as_ref(),
@@ -209,7 +211,7 @@ pub fn process(accounts: &[AccountInfo], data: &PlaceInitialOfferCctpShimData) -
 
     super::helpers::create_usdc_token_account_reliably(
         payer_info.key,
-        new_auction_custody_info.key,
+        &expected_auction_custody_key,
         new_auction_info.key,
         new_auction_custody_info.lamports(),
         accounts,
@@ -223,7 +225,7 @@ pub fn process(accounts: &[AccountInfo], data: &PlaceInitialOfferCctpShimData) -
     // TODO: Double-check that we do not need verify the derived pubkey is
     // correct. We shouldn't have to because the seeds are used to transfer
     // tokens, which will only work if the transfer authority pubkey is correct.
-    let (_, transfer_authority_bump) = Pubkey::find_program_address(
+    let (expected_transfer_authority_key, transfer_authority_bump) = Pubkey::find_program_address(
         &[
             TRANSFER_AUTHORITY_SEED_PREFIX,
             new_auction_key.as_ref(),
@@ -245,7 +247,7 @@ pub fn process(accounts: &[AccountInfo], data: &PlaceInitialOfferCctpShimData) -
         &spl_token::ID,
         offer_token_info.key,
         new_auction_custody_info.key,
-        transfer_authority.key,
+        &expected_transfer_authority_key,
         &[],
         fast_market_order
             .amount_in
@@ -282,13 +284,13 @@ pub fn process(accounts: &[AccountInfo], data: &PlaceInitialOfferCctpShimData) -
     // TODO: Double-check that we do not need verify the derived pubkey is
     // correct. We shouldn't have to because the seeds are used to create the
     // account, which will only work if the auction pubkey is correct.
-    let (_, new_auction_bump) =
+    let (expected_auction_key, new_auction_bump) =
         Pubkey::find_program_address(&[Auction::SEED_PREFIX, &vaa_message_digest.0], &ID);
 
     // Create the auction account and serialize its data into it.
     super::helpers::create_account_reliably(
         payer_info.key,
-        new_auction_key,
+        &expected_auction_key,
         new_auction_info.lamports(),
         8 + Auction::INIT_SPACE,
         accounts,
