@@ -18,9 +18,8 @@ use super::burn_and_post::{burn_and_post, PostMessageAccounts};
 
 const NUM_ACCOUNTS: usize = 32;
 
-// TODO: Rename to "ExecuteOrderCctpV2Accounts".
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub struct ExecuteOrderShimAccounts<'ix> {
+pub struct ExecuteOrderV2Accounts<'ix> {
     /// The signer account.
     pub payer: &'ix Pubkey, // 0
     /// The cctp message account. Seeds must be \["cctp-msg", auction_address.as_ref()\].
@@ -78,26 +77,18 @@ pub struct ExecuteOrderShimAccounts<'ix> {
     pub core_bridge_fee_collector: &'ix Pubkey, // 27
     /// The event authority account of the post message shim program
     pub post_message_shim_event_authority: &'ix Pubkey, // 28
-    /// The program id of the system program
-    // TODO: Remove.
-    pub system_program: &'ix Pubkey, // 29
-    /// The program id of the token program
-    // TODO: Remove.
-    pub token_program: &'ix Pubkey, // 30
-    /// The clock account
-    // TODO: Remove.
-    pub clock: &'ix Pubkey, // 31
 }
+    
 
 // TODO: Rename to "ExecuteOrderCctpV2".
 pub struct ExecuteOrderCctpShim<'ix> {
     pub program_id: &'ix Pubkey,
-    pub accounts: ExecuteOrderShimAccounts<'ix>,
+    pub accounts: ExecuteOrderV2Accounts<'ix>,
 }
 
 impl ExecuteOrderCctpShim<'_> {
     pub fn instruction(&self) -> Instruction {
-        let ExecuteOrderShimAccounts {
+        let ExecuteOrderV2Accounts {
             payer,
             new_cctp_message,
             custodian,
@@ -130,9 +121,6 @@ impl ExecuteOrderCctpShim<'_> {
             core_bridge_config,
             core_bridge_fee_collector,
             post_message_shim_event_authority,
-            system_program: _,
-            token_program: _,
-            clock: _,
         } = self.accounts;
 
         let accounts = vec![
@@ -470,7 +458,7 @@ mod test {
     fn test_instruction() {
         ExecuteOrderCctpShim {
             program_id: &Default::default(),
-            accounts: ExecuteOrderShimAccounts {
+            accounts: ExecuteOrderV2Accounts {
                 payer: &Default::default(),
                 new_cctp_message: &Default::default(),
                 custodian: &Default::default(),
@@ -500,9 +488,6 @@ mod test {
                 core_bridge_config: &Default::default(),
                 core_bridge_fee_collector: &Default::default(),
                 post_message_shim_event_authority: &Default::default(),
-                system_program: &Default::default(),
-                token_program: &Default::default(),
-                clock: &Default::default(),
             },
         }
         .instruction();
