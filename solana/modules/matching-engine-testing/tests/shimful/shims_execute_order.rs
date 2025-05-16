@@ -263,22 +263,22 @@ fn create_execute_order_shim_accounts<'ix>(
     clock_id: &'ix Pubkey,
 ) -> ExecuteOrderShimAccounts<'ix> {
     ExecuteOrderShimAccounts {
-        signer: &execute_order_fallback_accounts.signer, // 0
-        cctp_message: &execute_order_fallback_accounts.cctp_message, // 1
+        payer: &execute_order_fallback_accounts.signer, // 0
+        new_cctp_message: &execute_order_fallback_accounts.cctp_message, // 1
         custodian: &execute_order_fallback_accounts.custodian, // 2
         fast_market_order: &execute_order_fallback_accounts.fast_market_order_address, // 3
         active_auction: &execute_order_fallback_accounts.active_auction, // 4
-        active_auction_custody_token: &execute_order_fallback_accounts.active_auction_custody_token, // 5
-        active_auction_config: &execute_order_fallback_accounts.active_auction_config, // 6
-        active_auction_best_offer_token: &execute_order_fallback_accounts
+        auction_custody: &execute_order_fallback_accounts.active_auction_custody_token, // 5
+        auction_config: &execute_order_fallback_accounts.active_auction_config, // 6
+        auction_best_offer_token: &execute_order_fallback_accounts
             .active_auction_best_offer_token, // 7
         executor_token: &execute_order_fallback_accounts.executor_token,               // 8
-        initial_offer_token: &execute_order_fallback_accounts.initial_offer_token,     // 9
-        initial_participant: &execute_order_fallback_accounts.initial_participant,     // 10
-        to_router_endpoint: &execute_order_fallback_accounts.to_router_endpoint,       // 11
+        auction_initial_offer_token: &execute_order_fallback_accounts.initial_offer_token,     // 9
+        auction_initial_participant: &execute_order_fallback_accounts.initial_participant,     // 10
+        to_endpoint: &execute_order_fallback_accounts.to_router_endpoint,       // 11
         post_message_shim_program: &POST_MESSAGE_SHIM_PROGRAM_ID,                      // 12
         core_bridge_emitter_sequence: &execute_order_fallback_accounts.post_message_sequence, // 13
-        post_shim_message: &execute_order_fallback_accounts.post_message_message,      // 14
+        shim_message: &execute_order_fallback_accounts.post_message_message,      // 14
         cctp_deposit_for_burn_mint: &USDC_MINT,                                        // 15
         cctp_deposit_for_burn_token_messenger_minter_sender_authority:
             &execute_order_fallback_accounts.token_messenger_minter_sender_authority, // 16
