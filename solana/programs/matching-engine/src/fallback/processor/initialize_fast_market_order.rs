@@ -1,8 +1,12 @@
 use anchor_lang::{prelude::*, Discriminator};
 use bytemuck::{Pod, Zeroable};
-use solana_program::{instruction::Instruction, keccak};
+use solana_program::instruction::Instruction;
 
-use crate::{error::MatchingEngineError, state::FastMarketOrder, ID};
+use crate::{
+    error::MatchingEngineError,
+    state::{FastMarketOrder, FastMarketOrderParams},
+    ID,
+};
 
 const NUM_ACCOUNTS: usize = 7;
 
@@ -11,19 +15,18 @@ pub struct InitializeFastMarketOrderAccounts<'ix> {
     /// order account. This account will be the only authority allowed to
     /// close this account.
     pub payer: &'ix Pubkey, // 0
-
     /// The from router endpoint account for the hash of the fast market order
-    pub from_endpoint: &'ix Pubkey,
+    pub from_endpoint: &'ix Pubkey, // 1
+    /// The verify VAA shim program account
+    pub verify_vaa_shim_program: &'ix Pubkey, // 2
     /// Wormhole guardian set account used to check recovered pubkeys using
     /// [Self::guardian_set_signatures].
-    // TODO: Rename to "wormhole_guardian_set"
-    pub verify_vaa_shim_program: &'ix Pubkey, // 1
-    pub guardian_set: &'ix Pubkey, // 2
+    pub wormhole_guardian_set: &'ix Pubkey, // 3
     /// The guardian set signatures of fast market order VAA.
-    pub shim_guardian_signatures: &'ix Pubkey, // 3
+    pub shim_guardian_signatures: &'ix Pubkey, // 4
     /// The fast market order account pubkey (that is created by the
     /// instruction).
-    pub new_fast_market_order: &'ix Pubkey, // 4
+    pub new_fast_market_order: &'ix Pubkey, // 5
 }
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -39,10 +42,9 @@ pub struct InitializeFastMarketOrderData {
 
 impl InitializeFastMarketOrderData {
     // Adds the padding to the InitializeFastMarketOrderData
-    // TODO: change FastMarketOrder to FastMarketOrderParams.
-    pub fn new(fast_market_order: FastMarketOrder, guardian_set_bump: u8) -> Self {
+    pub fn new(fast_market_order_params: &FastMarketOrderParams, guardian_set_bump: u8) -> Self {
         Self {
-            fast_market_order,
+            fast_market_order: FastMarketOrder::new(fast_market_order_params),
             guardian_set_bump,
             _padding: Default::default(),
         }
@@ -70,7 +72,7 @@ impl InitializeFastMarketOrder<'_> {
             new_fast_market_order,
             from_endpoint,
 
-            guardian_set: wormhole_guardian_set,
+            wormhole_guardian_set,
             shim_guardian_signatures,
             verify_vaa_shim_program,
         } = self.accounts;
@@ -129,7 +131,7 @@ pub(super) fn process(
         3, // wormhole_guardian_set_index
         4, // shim_guardian_signatures_index
         data.guardian_set_bump,
-        keccak::Hash(fast_market_order_vaa_digest),
+        fast_market_order_vaa_digest,
         accounts,
     )?;
 
@@ -140,7 +142,7 @@ pub(super) fn process(
     let (expected_fast_market_order_key, fast_market_order_bump) = Pubkey::find_program_address(
         &[
             FastMarketOrder::SEED_PREFIX,
-            &fast_market_order_vaa_digest,
+            &fast_market_order_vaa_digest.as_ref(),
             fast_market_order.close_account_refund_recipient.as_ref(),
         ],
         &ID,
@@ -159,7 +161,7 @@ pub(super) fn process(
         &ID,
         &[&[
             FastMarketOrder::SEED_PREFIX,
-            &fast_market_order_vaa_digest,
+            &fast_market_order_vaa_digest.as_ref(),
             // TODO: Replace with payer_info.key.
             fast_market_order.close_account_refund_recipient.as_ref(),
             &[fast_market_order_bump],
@@ -193,11 +195,11 @@ mod test {
                 new_fast_market_order: &Default::default(),
                 from_endpoint: &Default::default(),
                 verify_vaa_shim_program: &Default::default(),
-                guardian_set: &Default::default(),
+                wormhole_guardian_set: &Default::default(),
                 shim_guardian_signatures: &Default::default(),
             },
             data: InitializeFastMarketOrderData::new(
-                FastMarketOrder::new(FastMarketOrderParams {
+                &FastMarketOrderParams {
                     amount_in: Default::default(),
                     min_amount_out: Default::default(),
                     deadline: Default::default(),
@@ -215,7 +217,7 @@ mod test {
                     vaa_emitter_chain: Default::default(),
                     vaa_consistency_level: Default::default(),
                     vaa_emitter_address: Default::default(),
-                }),
+                },
                 Default::default(),
             ),
         }

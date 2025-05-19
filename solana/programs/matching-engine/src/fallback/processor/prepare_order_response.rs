@@ -280,7 +280,7 @@ pub(super) fn process(
         Pubkey::find_program_address(
             &[
                 PreparedOrderResponse::SEED_PREFIX,
-                &fast_market_order_digest,
+                &fast_market_order_digest.as_ref(),
             ],
             &ID,
         );
@@ -294,7 +294,7 @@ pub(super) fn process(
         &ID,
         &[&[
             PreparedOrderResponse::SEED_PREFIX,
-            &fast_market_order_digest,
+            &fast_market_order_digest.as_ref(),
             &[prepared_order_response_bump],
         ]],
     )?;
@@ -411,7 +411,7 @@ pub(super) fn process(
 
     PreparedOrderResponse {
         seeds: PreparedOrderResponseSeeds {
-            fast_vaa_hash: fast_market_order_digest,
+            fast_vaa_hash: <[u8; 32]>::try_from(fast_market_order_digest.as_ref()).unwrap(),
             bump: prepared_order_response_bump,
         },
         info: PreparedOrderResponseInfo {

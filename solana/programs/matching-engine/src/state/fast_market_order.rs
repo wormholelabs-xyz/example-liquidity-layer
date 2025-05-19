@@ -75,7 +75,7 @@ pub struct FastMarketOrderParams {
 impl FastMarketOrder {
     pub const SEED_PREFIX: &'static [u8] = b"fast_market_order";
 
-    pub fn new(params: FastMarketOrderParams) -> Self {
+    pub fn new(params: &FastMarketOrderParams) -> Self {
         Self {
             amount_in: params.amount_in,
             min_amount_out: params.min_amount_out,
@@ -123,7 +123,7 @@ impl FastMarketOrder {
     /// A double hash of the serialised fast market order. Used for seeds and
     /// verification.
     // TODO: Change return type to keccak::Hash
-    pub fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> keccak::Hash {
         wormhole_svm_definitions::compute_keccak_digest(
             keccak::hashv(&[
                 &self.vaa_timestamp.to_be_bytes(),
@@ -137,6 +137,5 @@ impl FastMarketOrder {
             ]),
             None,
         )
-        .0
     }
 }

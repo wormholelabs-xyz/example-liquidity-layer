@@ -83,7 +83,8 @@ pub async fn test_place_initial_offer_shimful() {
             .fast_market_order()
             .unwrap()
             .fast_market_order
-            .digest(),
+            .digest()
+            .as_ref(),
         final_state
             .base()
             .vaas

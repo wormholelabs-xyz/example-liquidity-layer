@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_bytemuck() {
-        let test_fast_market_order = FastMarketOrder::new(FastMarketOrderParams {
+        let test_fast_market_order = FastMarketOrder::new(&FastMarketOrderParams {
             amount_in: 1000000000000000000,
             min_amount_out: 1000000000000000000,
             deadline: 1000000000,

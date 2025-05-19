@@ -51,12 +51,13 @@ pub async fn initialize_fast_market_order_shimful(
     let program_id = &testing_context.get_matching_engine_program_id();
     let test_vaa_pair = current_state.get_test_vaa_pair(config.vaa_index);
     let fast_transfer_vaa = test_vaa_pair.fast_transfer_vaa.clone();
-    let fast_market_order = create_fast_market_order_state_from_vaa_data(
+    let fast_market_order_params = create_fast_market_order_params_from_vaa_data(
         &fast_transfer_vaa.vaa_data,
         config
             .close_account_refund_recipient
             .unwrap_or_else(|| testing_context.testing_actors.solvers[0].pubkey()),
     );
+    let fast_market_order = FastMarketOrderState::new(&fast_market_order_params);
     let payer_signer = config
         .payer_signer
         .clone()
@@ -75,7 +76,7 @@ pub async fn initialize_fast_market_order_shimful(
     let (fast_market_order_account, fast_market_order_bump) = Pubkey::find_program_address(
         &[
             FastMarketOrderState::SEED_PREFIX,
-            &fast_market_order.digest(),
+            &fast_market_order.digest().as_ref(),
             &fast_market_order.close_account_refund_recipient.as_ref(),
         ],
         program_id,
@@ -89,7 +90,7 @@ pub async fn initialize_fast_market_order_shimful(
     let initialize_fast_market_order_ix = initialize_fast_market_order_shimful_instruction(
         &payer_signer,
         program_id,
-        fast_market_order,
+        &fast_market_order_params,
         &guardian_signature_info,
         &from_endpoint,
     );
@@ -138,7 +139,7 @@ pub async fn initialize_fast_market_order_shimful(
 ///
 /// * `payer_signer` - The payer signer keypair
 /// * `program_id` - The program id
-/// * `fast_market_order` - The fast market order state
+/// * `fast_market_order_params` - The fast market order params
 /// * `guardian_signature_info` - Information about guardian signatures
 ///
 /// # Returns
@@ -147,14 +148,15 @@ pub async fn initialize_fast_market_order_shimful(
 pub fn initialize_fast_market_order_shimful_instruction(
     payer_signer: &Rc<Keypair>,
     program_id: &Pubkey,
-    fast_market_order: FastMarketOrderState,
+    fast_market_order_params: &FastMarketOrderParams,
     guardian_signature_info: &GuardianSignatureInfo,
     from_endpoint: &Pubkey,
 ) -> solana_program::instruction::Instruction {
+    let fast_market_order = FastMarketOrderState::new(fast_market_order_params);
     let fast_market_order_account = Pubkey::find_program_address(
         &[
             FastMarketOrderState::SEED_PREFIX,
-            &fast_market_order.digest(),
+            &fast_market_order.digest().as_ref(),
             &fast_market_order.close_account_refund_recipient.as_ref(),
         ],
         program_id,
@@ -164,7 +166,7 @@ pub fn initialize_fast_market_order_shimful_instruction(
     let create_fast_market_order_accounts = InitializeFastMarketOrderFallbackAccounts {
         payer: &payer_signer.pubkey(),
         new_fast_market_order: &fast_market_order_account,
-        guardian_set: &guardian_signature_info.guardian_set_pubkey,
+        wormhole_guardian_set: &guardian_signature_info.guardian_set_pubkey,
         shim_guardian_signatures: &guardian_signature_info.guardian_signatures_pubkey,
         from_endpoint,
         verify_vaa_shim_program: &WORMHOLE_VERIFY_VAA_SHIM_PID,
@@ -174,7 +176,7 @@ pub fn initialize_fast_market_order_shimful_instruction(
         program_id,
         accounts: create_fast_market_order_accounts,
         data: InitializeFastMarketOrderFallbackData::new(
-            fast_market_order,
+            fast_market_order_params,
             guardian_signature_info.guardian_set_bump,
         ),
     }
@@ -228,9 +230,9 @@ pub async fn close_fast_market_order_fallback(
         .await;
 }
 
-/// Create the fast market order state from the vaa data
+/// Create the fast market order params from the vaa data
 ///
-/// This function creates the fast market order state from the vaa data
+/// This function creates the fast market order params from the vaa data
 ///
 /// # Arguments
 ///
@@ -239,11 +241,11 @@ pub async fn close_fast_market_order_fallback(
 ///
 /// # Returns
 ///
-/// * `fast_market_order_state` - The fast market order state
-pub fn create_fast_market_order_state_from_vaa_data(
+/// * `fast_market_order_params` - The fast market order params
+pub fn create_fast_market_order_params_from_vaa_data(
     vaa_data: &utils::vaa::PostedVaaData,
     close_account_refund_recipient: Pubkey,
-) -> FastMarketOrderState {
+) -> FastMarketOrderParams {
     let vaa_message = matching_engine::fallback::place_initial_offer::VaaMessageBodyHeader::new(
         vaa_data.consistency_level,
         vaa_data.vaa_time,
@@ -267,7 +269,7 @@ pub fn create_fast_market_order_state_from_vaa_data(
 
         fixed_array
     };
-    let fast_market_order = FastMarketOrderState::new(FastMarketOrderParams {
+    let fast_market_order_params = FastMarketOrderParams {
         amount_in: order.amount_in,
         min_amount_out: order.min_amount_out,
         deadline: order.deadline,
@@ -285,13 +287,15 @@ pub fn create_fast_market_order_state_from_vaa_data(
         vaa_emitter_chain: vaa_data.emitter_chain,
         vaa_consistency_level: vaa_data.consistency_level,
         vaa_emitter_address: vaa_data.emitter_address,
-    });
+    };
 
-    assert_eq!(fast_market_order.redeemer, order.redeemer);
+    assert_eq!(fast_market_order_params.redeemer, order.redeemer);
     assert_eq!(
-        vaa_message.digest(&fast_market_order).as_ref(),
+        vaa_message
+            .digest(&FastMarketOrderState::new(&fast_market_order_params))
+            .as_ref(),
         vaa_data.digest().as_ref()
     );
 
-    fast_market_order
+    fast_market_order_params
 }
