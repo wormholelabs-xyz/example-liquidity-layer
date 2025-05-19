@@ -1,9 +1,8 @@
-use crate::testing_engine::config::{ExecuteOrderInstructionConfig, InstructionConfig};
+use crate::testing_engine::config::{ExecuteOrderInstructionConfig, InstructionConfig, OverwriteAccountField};
 use crate::testing_engine::setup::{TestingContext, TransferDirection};
 use crate::testing_engine::state::{OrderExecutedState, TestingEngineState};
 
 use super::super::utils;
-use anchor_spl::token::spl_token;
 use common::wormhole_cctp_solana::cctp::{
     MESSAGE_TRANSMITTER_PROGRAM_ID, TOKEN_MESSENGER_MINTER_PROGRAM_ID,
 };
@@ -49,7 +48,6 @@ pub async fn execute_order_shimful(
         current_state,
         config,
         &fixture_accounts,
-        config.fast_market_order_address,
     );
     let program_id = &testing_context.get_matching_engine_program_id();
     let payer_signer = config
@@ -107,7 +105,7 @@ pub async fn execute_order_shimful(
 }
 
 /// A helper struct for the accounts for the execute order shimful instruction that disregards the lifetime
-struct ExecuteOrderShimfulAccounts {
+pub struct ExecuteOrderShimfulAccounts {
     pub signer: Pubkey,
     pub custodian: Pubkey,
     pub fast_market_order_address: Pubkey,
@@ -137,7 +135,6 @@ impl ExecuteOrderShimfulAccounts {
         current_state: &TestingEngineState,
         config: &ExecuteOrderInstructionConfig,
         fixture_accounts: &utils::account_fixtures::FixtureAccounts,
-        override_fast_market_order_address: Option<Pubkey>,
     ) -> Self {
         let payer_signer = config
             .payer_signer
@@ -149,12 +146,6 @@ impl ExecuteOrderShimfulAccounts {
         let initial_participant = active_auction_state.initial_offer.participant;
         let active_auction = active_auction_state.auction_address;
         let custodian = auction_accounts.custodian;
-        let fast_market_order_address = override_fast_market_order_address.unwrap_or_else(|| {
-            current_state
-                .fast_market_order()
-                .unwrap()
-                .fast_market_order_address
-        });
         let remote_token_messenger = match transfer_direction {
             TransferDirection::FromEthereumToArbitrum => {
                 fixture_accounts.arbitrum_remote_token_messenger
@@ -208,8 +199,13 @@ impl ExecuteOrderShimfulAccounts {
         .0;
         let solver = config.actor_enum.get_actor(&testing_context.testing_actors);
         let executor_token = solver.token_account_address(&config.token_enum).unwrap();
-
-        Self {
+        let fast_market_order_address = current_state
+            .fast_market_order()
+            .map(|fast_market_order| fast_market_order.fast_market_order_address)
+            .unwrap_or_else(|| {
+                Pubkey::new_unique()
+            });
+        let mut accounts = Self {
             signer: payer_signer.pubkey(),
             custodian: auction_accounts.custodian,
             fast_market_order_address,
@@ -231,7 +227,17 @@ impl ExecuteOrderShimfulAccounts {
             cctp_message,
             post_message_sequence,
             post_message_message,
+        };
+        if let Some(overwrite_accounts) = &config.overwrite_accounts {
+            for field in overwrite_accounts.iter() {
+                match field {
+                    OverwriteAccountField::CctpTokenMessengerMinter(value) => {
+                        accounts.token_messenger_minter_sender_authority = *value;
+                    }
+                }
+            }
         }
+        accounts
     }
 }
 

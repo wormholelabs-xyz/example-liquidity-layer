@@ -178,8 +178,25 @@ impl InstructionConfig for PrepareOrderResponseInstructionConfig {
 }
 
 #[derive(Clone)]
+pub struct OverwriteAccounts(pub Vec<OverwriteAccountField>);
+
+impl Deref for OverwriteAccounts {
+    type Target = Vec<OverwriteAccountField>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Clone)]
+pub enum OverwriteAccountField {
+    CctpTokenMessengerMinter(Pubkey),
+    // Add other fields here if needed
+}
+
+#[derive(Clone)]
 pub struct ExecuteOrderInstructionConfig {
-    pub fast_market_order_address: OverwriteCurrentState<Pubkey>,
+    pub overwrite_accounts: OverwriteCurrentState<OverwriteAccounts>,
     pub actor_enum: TestingActorEnum,
     pub token_enum: SplTokenEnum,
     pub vaa_index: usize,
@@ -194,7 +211,7 @@ impl Default for ExecuteOrderInstructionConfig {
         Self {
             fast_forward_slots: 3,
             actor_enum: TestingActorEnum::default(),
-            fast_market_order_address: None,
+            overwrite_accounts: None,
             token_enum: SplTokenEnum::default(),
             vaa_index: 0,
             payer_signer: None,
