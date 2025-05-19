@@ -10,8 +10,7 @@ pub struct InitializeFastMarketOrderAccounts<'ix> {
     /// Lamports from this signer will be used to create the new fast market
     /// order account. This account will be the only authority allowed to
     /// close this account.
-    // TODO: Rename to "payer".
-    pub signer: &'ix Pubkey, // 0
+    pub payer: &'ix Pubkey, // 0
 
     /// The from router endpoint account for the hash of the fast market order
     pub from_endpoint: &'ix Pubkey,
@@ -21,14 +20,10 @@ pub struct InitializeFastMarketOrderAccounts<'ix> {
     pub verify_vaa_shim_program: &'ix Pubkey, // 1
     pub guardian_set: &'ix Pubkey, // 2
     /// The guardian set signatures of fast market order VAA.
-    // TODO: Rename to "shim_guardian_signatures".
-    pub guardian_set_signatures: &'ix Pubkey, // 3
+    pub shim_guardian_signatures: &'ix Pubkey, // 3
     /// The fast market order account pubkey (that is created by the
     /// instruction).
-    // TODO: Rename to "new_fast_market_order".
-    pub fast_market_order_account: &'ix Pubkey, // 4
-    // TODO: Remove.
-    pub system_program: &'ix Pubkey, // 5
+    pub new_fast_market_order: &'ix Pubkey, // 4
 }
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -71,14 +66,13 @@ pub struct InitializeFastMarketOrder<'ix> {
 impl InitializeFastMarketOrder<'_> {
     pub fn instruction(&self) -> Instruction {
         let InitializeFastMarketOrderAccounts {
-            signer: payer,
-            fast_market_order_account: new_fast_market_order,
+            payer,
+            new_fast_market_order,
             from_endpoint,
 
             guardian_set: wormhole_guardian_set,
-            guardian_set_signatures: shim_guardian_signatures,
+            shim_guardian_signatures,
             verify_vaa_shim_program,
-            system_program: _,
         } = self.accounts;
 
         let accounts = vec![
@@ -195,13 +189,12 @@ mod test {
         InitializeFastMarketOrder {
             program_id: &Default::default(),
             accounts: InitializeFastMarketOrderAccounts {
-                signer: &Default::default(),
-                fast_market_order_account: &Default::default(),
+                payer: &Default::default(),
+                new_fast_market_order: &Default::default(),
                 from_endpoint: &Default::default(),
                 verify_vaa_shim_program: &Default::default(),
                 guardian_set: &Default::default(),
-                guardian_set_signatures: &Default::default(),
-                system_program: &Default::default(),
+                shim_guardian_signatures: &Default::default(),
             },
             data: InitializeFastMarketOrderData::new(
                 FastMarketOrder::new(FastMarketOrderParams {

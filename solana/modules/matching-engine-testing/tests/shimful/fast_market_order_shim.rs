@@ -162,13 +162,12 @@ pub fn initialize_fast_market_order_shimful_instruction(
     .0;
 
     let create_fast_market_order_accounts = InitializeFastMarketOrderFallbackAccounts {
-        signer: &payer_signer.pubkey(),
-        fast_market_order_account: &fast_market_order_account,
+        payer: &payer_signer.pubkey(),
+        new_fast_market_order: &fast_market_order_account,
         guardian_set: &guardian_signature_info.guardian_set_pubkey,
-        guardian_set_signatures: &guardian_signature_info.guardian_signatures_pubkey,
+        shim_guardian_signatures: &guardian_signature_info.guardian_signatures_pubkey,
         from_endpoint,
         verify_vaa_shim_program: &WORMHOLE_VERIFY_VAA_SHIM_PID,
-        system_program: &solana_program::system_program::ID,
     };
 
     InitializeFastMarketOrderFallback {
