@@ -18,47 +18,37 @@ use super::burn_and_post::{burn_and_post, PostMessageAccounts};
 
 const NUM_ACCOUNTS: usize = 32;
 
-// TODO: Rename to "ExecuteOrderCctpV2Accounts".
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub struct ExecuteOrderShimAccounts<'ix> {
+pub struct ExecuteOrderV2Accounts<'ix> {
     /// The signer account.
-    // TODO: Rename to "payer".
-    pub signer: &'ix Pubkey, // 0
+    pub payer: &'ix Pubkey, // 0
     /// The cctp message account. Seeds must be \["cctp-msg", auction_address.as_ref()\].
-    // TODO: Rename to "new_cctp_message".
-    pub cctp_message: &'ix Pubkey, // 1
+    pub new_cctp_message: &'ix Pubkey, // 1
     pub custodian: &'ix Pubkey, // 2
     /// Seeds must be \["fast_market_order", auction_address.as_ref()\].
     pub fast_market_order: &'ix Pubkey, // 3
     /// The auction account created from the place initial offer instruction.
     pub active_auction: &'ix Pubkey, // 4
     /// The associated token address of the auction's custody token.
-    // TODO: Rename to "auction_custody".
-    pub active_auction_custody_token: &'ix Pubkey, // 5
+    pub auction_custody: &'ix Pubkey, // 5
     /// The auction config account created from the place initial offer instruction.
-    // TODO: Rename to "auction_config".
-    pub active_auction_config: &'ix Pubkey, // 6
+    pub auction_config: &'ix Pubkey, // 6
     /// The token account of the auction's best offer
-    // TODO: Rename to "auction_best_offer_token".
-    pub active_auction_best_offer_token: &'ix Pubkey, // 7
+    pub auction_best_offer_token: &'ix Pubkey, // 7
     /// The token account of the executor
     pub executor_token: &'ix Pubkey, // 8
     /// The token account of the auction's initial offer
-    // TODO: Rename to "auction_initial_offer_token".
-    pub initial_offer_token: &'ix Pubkey, // 9
+    pub auction_initial_offer_token: &'ix Pubkey, // 9
     /// The account that signed the creation of the auction when placing the initial offer.
-    // TODO: Rename to "auction_initial_participant".
-    pub initial_participant: &'ix Pubkey, // 10
+    pub auction_initial_participant: &'ix Pubkey, // 10
     /// The router endpoint account of the auction's target chain
-    // TODO: Rename to "to_endpoint".
-    pub to_router_endpoint: &'ix Pubkey, // 11
+    pub to_endpoint: &'ix Pubkey, // 11
     /// The program id of the post message shim program
     pub post_message_shim_program: &'ix Pubkey, // 12
     /// The emitter sequence of the core bridge program (can be derived)
     pub core_bridge_emitter_sequence: &'ix Pubkey, // 13
     /// The message account of the post message shim program (can be derived)
-    // TODO: Rename to "shim_message".
-    pub post_shim_message: &'ix Pubkey, // 14
+    pub shim_message: &'ix Pubkey, // 14
     pub cctp_deposit_for_burn_token_messenger_minter_program: &'ix Pubkey, // 15
     /// The mint account of the CCTP token to be burned
     pub cctp_deposit_for_burn_mint: &'ix Pubkey, // 16
@@ -87,41 +77,33 @@ pub struct ExecuteOrderShimAccounts<'ix> {
     pub core_bridge_fee_collector: &'ix Pubkey, // 27
     /// The event authority account of the post message shim program
     pub post_message_shim_event_authority: &'ix Pubkey, // 28
-    /// The program id of the system program
-    // TODO: Remove.
-    pub system_program: &'ix Pubkey, // 29
-    /// The program id of the token program
-    // TODO: Remove.
-    pub token_program: &'ix Pubkey, // 30
-    /// The clock account
-    // TODO: Remove.
-    pub clock: &'ix Pubkey, // 31
 }
+    
 
 // TODO: Rename to "ExecuteOrderCctpV2".
 pub struct ExecuteOrderCctpShim<'ix> {
     pub program_id: &'ix Pubkey,
-    pub accounts: ExecuteOrderShimAccounts<'ix>,
+    pub accounts: ExecuteOrderV2Accounts<'ix>,
 }
 
 impl ExecuteOrderCctpShim<'_> {
     pub fn instruction(&self) -> Instruction {
-        let ExecuteOrderShimAccounts {
-            signer: payer,
-            cctp_message: new_cctp_message,
+        let ExecuteOrderV2Accounts {
+            payer,
+            new_cctp_message,
             custodian,
             fast_market_order,
             active_auction,
-            active_auction_custody_token: auction_custody,
-            active_auction_config: auction_config,
-            active_auction_best_offer_token: auction_best_offer_token,
+            auction_custody,
+            auction_config,
+            auction_best_offer_token,
             executor_token,
-            initial_offer_token: auction_initial_offer_token,
-            initial_participant: auction_initial_participant,
-            to_router_endpoint: to_endpoint,
+            auction_initial_offer_token,
+            auction_initial_participant,
+            to_endpoint,
             post_message_shim_program,
             core_bridge_emitter_sequence,
-            post_shim_message: shim_message,
+            shim_message,
             cctp_deposit_for_burn_mint: cctp_mint,
             cctp_deposit_for_burn_token_messenger_minter_sender_authority:
                 cctp_token_messenger_minter_sender_authority,
@@ -139,9 +121,6 @@ impl ExecuteOrderCctpShim<'_> {
             core_bridge_config,
             core_bridge_fee_collector,
             post_message_shim_event_authority,
-            system_program: _,
-            token_program: _,
-            clock: _,
         } = self.accounts;
 
         let accounts = vec![
@@ -479,22 +458,22 @@ mod test {
     fn test_instruction() {
         ExecuteOrderCctpShim {
             program_id: &Default::default(),
-            accounts: ExecuteOrderShimAccounts {
-                signer: &Default::default(),
-                cctp_message: &Default::default(),
+            accounts: ExecuteOrderV2Accounts {
+                payer: &Default::default(),
+                new_cctp_message: &Default::default(),
                 custodian: &Default::default(),
                 fast_market_order: &Default::default(),
                 active_auction: &Default::default(),
-                active_auction_custody_token: &Default::default(),
-                active_auction_config: &Default::default(),
-                active_auction_best_offer_token: &Default::default(),
+                auction_custody: &Default::default(),
+                auction_config: &Default::default(),
+                auction_best_offer_token: &Default::default(),
                 executor_token: &Default::default(),
-                initial_offer_token: &Default::default(),
-                initial_participant: &Default::default(),
-                to_router_endpoint: &Default::default(),
+                auction_initial_offer_token: &Default::default(),
+                auction_initial_participant: &Default::default(),
+                to_endpoint: &Default::default(),
                 post_message_shim_program: &Default::default(),
                 core_bridge_emitter_sequence: &Default::default(),
-                post_shim_message: &Default::default(),
+                shim_message: &Default::default(),
                 cctp_deposit_for_burn_mint: &Default::default(),
                 cctp_deposit_for_burn_token_messenger_minter_sender_authority: &Default::default(),
                 cctp_deposit_for_burn_message_transmitter_config: &Default::default(),
@@ -509,9 +488,6 @@ mod test {
                 core_bridge_config: &Default::default(),
                 core_bridge_fee_collector: &Default::default(),
                 post_message_shim_event_authority: &Default::default(),
-                system_program: &Default::default(),
-                token_program: &Default::default(),
-                clock: &Default::default(),
             },
         }
         .instruction();

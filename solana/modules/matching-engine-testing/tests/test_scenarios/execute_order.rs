@@ -10,7 +10,7 @@
 //!
 
 use std::collections::HashSet;
-
+use anchor_lang::prelude::Pubkey;
 use crate::test_scenarios::make_offer::place_initial_offer_shimless;
 use crate::testing_engine;
 use crate::testing_engine::config::{
@@ -1080,6 +1080,39 @@ pub async fn test_execute_order_shim_emitter_chain_mismatch() {
             &mut test_context,
             initialize_second_fast_market_order_instruction_triggers,
             Some(initialize_first_fast_market_order_state),
+        )
+        .await;
+}
+
+/// Cannot execute order shim when the cctp token messenger minter program is not the expected program
+#[tokio::test]
+pub async fn test_execute_order_shim_cctp_token_messenger_minter_program_mismatch() {
+    let transfer_direction = TransferDirection::FromEthereumToArbitrum;
+    let (place_initial_offer_state, mut test_context, testing_engine) =
+        Box::pin(place_initial_offer_shim(
+            PlaceInitialOfferInstructionConfig::default(),
+            None,
+            transfer_direction,
+        ))
+        .await;
+    let instruction_triggers = vec![InstructionTrigger::ExecuteOrderShim(
+        ExecuteOrderInstructionConfig {
+            expected_error: Some(ExpectedError {
+                instruction_index: 2,
+                error_code: 2006,
+                error_string: "ConstraintSeeds".to_string(),
+            }),
+            overwrite_accounts: Some(OverwriteAccounts(vec![OverwriteAccountField::CctpTokenMessengerMinter(
+                Pubkey::new_unique(),
+            )])),
+            ..ExecuteOrderInstructionConfig::default()
+        },
+    )];
+    testing_engine
+        .execute(
+            &mut test_context,
+            instruction_triggers,
+            Some(place_initial_offer_state),
         )
         .await;
 }
