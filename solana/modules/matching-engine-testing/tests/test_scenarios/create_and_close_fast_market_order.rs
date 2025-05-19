@@ -114,47 +114,6 @@ pub async fn test_close_fast_market_order_fallback() {
         .await;
 }
 
-/// Test that the close fast market order account works correctly for the fallback instruction
-#[tokio::test]
-pub async fn test_close_fast_market_order_fallback_with_custom_refund_recipient() {
-    let vaa_args = vec![VaaArgs {
-        post_vaa: false,
-        ..VaaArgs::default()
-    }];
-    let (testing_context, mut test_context) = setup_environment(
-        ShimMode::VerifyAndPostSignature,
-        TransferDirection::FromArbitrumToEthereum,
-        Some(vaa_args),
-    )
-    .await;
-    let solver_1 = &testing_context.testing_actors.solvers[1].clone();
-    let solver_1_balance_before = solver_1.get_lamport_balance(&mut test_context).await;
-    let testing_engine = TestingEngine::new(testing_context).await;
-    let instruction_triggers = vec![
-        InstructionTrigger::InitializeProgram(InitializeInstructionConfig::default()),
-        InstructionTrigger::CreateCctpRouterEndpoints(
-            CreateCctpRouterEndpointsInstructionConfig::default(),
-        ),
-        InstructionTrigger::InitializeFastMarketOrderShim(
-            InitializeFastMarketOrderShimInstructionConfig {
-                close_account_refund_recipient: Some(solver_1.pubkey()),
-                ..InitializeFastMarketOrderShimInstructionConfig::default()
-            },
-        ),
-        InstructionTrigger::CloseFastMarketOrderShim(CloseFastMarketOrderShimInstructionConfig {
-            close_account_refund_recipient_keypair: Some(solver_1.keypair()),
-            ..CloseFastMarketOrderShimInstructionConfig::default()
-        }),
-    ];
-    testing_engine
-        .execute(&mut test_context, instruction_triggers, None)
-        .await;
-    let solver_1_balance_after = solver_1.get_lamport_balance(&mut test_context).await;
-    assert!(
-        solver_1_balance_after > solver_1_balance_before,
-        "Solver 1 balance after is not greater than balance before"
-    );
-}
 
 /*
                     Sad path tests Section
@@ -332,7 +291,6 @@ pub async fn test_multiple_fast_market_orders_can_be_opened_and_closed_by_differ
     )
     .await;
     let solver_1 = testing_context.testing_actors.solvers[1].clone();
-    let solver_2 = testing_context.testing_actors.solvers[2].clone();
     let testing_engine = TestingEngine::new(testing_context).await;
     let instruction_triggers = vec![
         InstructionTrigger::InitializeProgram(InitializeInstructionConfig::default()),
@@ -357,6 +315,7 @@ pub async fn test_multiple_fast_market_orders_can_be_opened_and_closed_by_differ
     let instruction_triggers_1 = vec![InstructionTrigger::InitializeFastMarketOrderShim(
         InitializeFastMarketOrderShimInstructionConfig {
             fast_market_order_id: 1,
+            payer_signer: Some(solver_1.keypair()),
             close_account_refund_recipient: Some(solver_1.pubkey()),
             ..InitializeFastMarketOrderShimInstructionConfig::default()
         },
@@ -377,13 +336,6 @@ pub async fn test_multiple_fast_market_orders_can_be_opened_and_closed_by_differ
             fast_market_order_address: Some(fast_market_order_0_pubkey),
             ..CloseFastMarketOrderShimInstructionConfig::default()
         }),
-        InstructionTrigger::InitializeFastMarketOrderShim(
-            InitializeFastMarketOrderShimInstructionConfig {
-                fast_market_order_id: 2,
-                close_account_refund_recipient: Some(solver_2.pubkey()),
-                ..InitializeFastMarketOrderShimInstructionConfig::default()
-            },
-        ),
     ];
     let current_state = testing_engine
         .execute(
@@ -398,12 +350,6 @@ pub async fn test_multiple_fast_market_orders_can_be_opened_and_closed_by_differ
         .fast_market_order_address;
     let instruction_triggers_3 = vec![
         InstructionTrigger::CloseFastMarketOrderShim(CloseFastMarketOrderShimInstructionConfig {
-            close_account_refund_recipient_keypair: Some(solver_2.keypair()),
-            fast_market_order_address: Some(fast_market_order_2_pubkey),
-            ..CloseFastMarketOrderShimInstructionConfig::default()
-        }),
-        InstructionTrigger::CloseFastMarketOrderShim(CloseFastMarketOrderShimInstructionConfig {
-            close_account_refund_recipient_keypair: Some(solver_1.keypair()),
             fast_market_order_address: Some(fast_market_order_1_pubkey),
             ..CloseFastMarketOrderShimInstructionConfig::default()
         }),

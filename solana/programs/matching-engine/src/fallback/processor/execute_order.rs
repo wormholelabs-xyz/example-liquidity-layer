@@ -213,7 +213,7 @@ pub(super) fn process(accounts: &[AccountInfo]) -> Result<()> {
     let active_auction_inner_info = active_auction.info.as_ref().unwrap();
 
     require!(
-        active_auction.vaa_hash == fast_market_order.digest(),
+        active_auction.vaa_hash == fast_market_order.digest().as_ref(),
         MatchingEngineError::VaaMismatch
     );
 

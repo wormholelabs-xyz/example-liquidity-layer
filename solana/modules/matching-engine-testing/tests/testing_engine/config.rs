@@ -21,7 +21,7 @@ use std::{
 };
 
 use crate::{
-    shimful::fast_market_order_shim::create_fast_market_order_state_from_vaa_data,
+    shimful::fast_market_order_shim::create_fast_market_order_params_from_vaa_data,
     shimless::initialize::AuctionParametersConfig,
     utils::{
         auction::{ActiveAuctionState, AuctionAccounts},
@@ -657,14 +657,15 @@ impl CombinedInstructionConfig {
     ) -> Self {
         let test_vaa_pair = current_state.get_test_vaa_pair(0);
         let fast_transfer_vaa = test_vaa_pair.fast_transfer_vaa.clone();
-        let fast_market_order = create_fast_market_order_state_from_vaa_data(
+        let fast_market_order_params = create_fast_market_order_params_from_vaa_data(
             &fast_transfer_vaa.vaa_data,
             testing_actors.solvers[0].pubkey(),
         );
+        let fast_market_order = FastMarketOrderState::new(&fast_market_order_params);
         let (fast_market_order_address, _fast_market_order_bump) = Pubkey::find_program_address(
             &[
                 FastMarketOrderState::SEED_PREFIX,
-                &fast_market_order.digest(),
+                &fast_market_order.digest().as_ref(),
                 &fast_market_order.close_account_refund_recipient.as_ref(),
             ],
             program_id,

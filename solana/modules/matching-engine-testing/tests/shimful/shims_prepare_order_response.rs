@@ -384,7 +384,7 @@ impl PrepareOrderResponseShimAccountsHelper {
         let fast_market_order_digest = data.fast_market_order.digest();
         let prepared_order_response_seeds = [
             PreparedOrderResponse::SEED_PREFIX,
-            &fast_market_order_digest,
+            &fast_market_order_digest.as_ref(),
         ];
 
         let (prepared_order_response_pda, _prepared_order_response_bump) =

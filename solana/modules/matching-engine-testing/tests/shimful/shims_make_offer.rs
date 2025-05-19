@@ -11,10 +11,10 @@ use matching_engine::fallback::place_initial_offer::{
     PlaceInitialOfferCctpShimAccounts as PlaceInitialOfferCctpShimFallbackAccounts,
     PlaceInitialOfferCctpShimData as PlaceInitialOfferCctpShimFallbackData,
 };
-use matching_engine::state::Auction;
+use matching_engine::state::{Auction, FastMarketOrder};
 use solana_program_test::ProgramTestContext;
 
-use super::fast_market_order_shim::create_fast_market_order_state_from_vaa_data;
+use super::fast_market_order_shim::create_fast_market_order_params_from_vaa_data;
 use solana_sdk::{pubkey::Pubkey, signer::Signer};
 
 /// Places an initial offer using the fallback program. The vaa is constructed from a passed in PostedVaaData struct. The nonce is forced to 0.
@@ -295,7 +295,10 @@ impl PlaceInitialOfferShimfulAccounts {
             .fast_transfer_vaa;
         let vaa_data = fast_transfer_vaa.get_vaa_data();
         let fast_market_order_state =
-            create_fast_market_order_state_from_vaa_data(vaa_data, close_account_refund_recipient);
+            FastMarketOrder::new(&create_fast_market_order_params_from_vaa_data(
+                vaa_data,
+                close_account_refund_recipient,
+            ));
         let offer_actor = config.actor.get_actor(&testing_context.testing_actors);
         let offer_token = match &config.custom_accounts {
             Some(custom_accounts) => match custom_accounts.offer_token_address {
@@ -309,7 +312,10 @@ impl PlaceInitialOfferShimfulAccounts {
                 .unwrap(),
         };
         let auction = Pubkey::find_program_address(
-            &[Auction::SEED_PREFIX, &fast_market_order_state.digest()],
+            &[
+                Auction::SEED_PREFIX,
+                &fast_market_order_state.digest().as_ref(),
+            ],
             &program_id,
         )
         .0;

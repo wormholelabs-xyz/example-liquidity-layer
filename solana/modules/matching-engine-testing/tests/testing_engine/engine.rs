@@ -33,7 +33,7 @@ use super::setup::TestingContext;
 use super::{config::*, state::*};
 use crate::shimful;
 use crate::shimful::fast_market_order_shim::{
-    create_fast_market_order_state_from_vaa_data, initialize_fast_market_order_shimful,
+    create_fast_market_order_params_from_vaa_data, initialize_fast_market_order_shimful,
     initialize_fast_market_order_shimful_instruction,
 };
 use crate::shimful::shims_make_offer::{
@@ -858,12 +858,13 @@ impl TestingEngine {
         let test_vaa_pair =
             current_state.get_test_vaa_pair(create_fast_market_order_config.vaa_index);
         let fast_transfer_vaa = test_vaa_pair.fast_transfer_vaa.clone();
-        let fast_market_order = create_fast_market_order_state_from_vaa_data(
+        let fast_market_order_params = create_fast_market_order_params_from_vaa_data(
             &fast_transfer_vaa.vaa_data,
             create_fast_market_order_config
                 .close_account_refund_recipient
                 .unwrap_or_else(|| self.testing_context.testing_actors.solvers[0].pubkey()),
         );
+        let fast_market_order = FastMarketOrder::new(&fast_market_order_params);
         let create_fast_market_order_payer_signer = create_fast_market_order_config
             .payer_signer
             .clone()
@@ -881,7 +882,7 @@ impl TestingEngine {
         let (fast_market_order_account, fast_market_order_bump) = Pubkey::find_program_address(
             &[
                 FastMarketOrder::SEED_PREFIX,
-                &fast_market_order.digest(),
+                &fast_market_order.digest().as_ref(),
                 &fast_market_order.close_account_refund_recipient.as_ref(),
             ],
             program_id,
@@ -895,7 +896,7 @@ impl TestingEngine {
         let create_fast_market_order_instruction = initialize_fast_market_order_shimful_instruction(
             &create_fast_market_order_payer_signer,
             program_id,
-            fast_market_order,
+            &fast_market_order_params,
             &guardian_signature_info,
             &from_endpoint_pubkey,
         );
