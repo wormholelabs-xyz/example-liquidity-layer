@@ -64,7 +64,7 @@ pub struct FastMarketOrderParams {
     pub max_fee: u64,
     pub init_auction_fee: u64,
     pub redeemer_message: [u8; 512],
-    pub close_account_refund_recipient: Pubkey,
+    pub close_account_refund_recipient: Pubkey, // Same as the payer
     pub vaa_sequence: u64,
     pub vaa_timestamp: u32,
     pub vaa_emitter_chain: u16,

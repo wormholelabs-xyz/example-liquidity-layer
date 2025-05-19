@@ -115,6 +115,12 @@ pub(super) fn process(
     // fast market order account.
     let payer_info = &accounts[0];
 
+    require_keys_eq!(
+        *payer_info.key,
+        fast_market_order.close_account_refund_recipient,
+        MatchingEngineError::MismatchingCloseAccountRefundRecipient
+    );
+
     // These accounts will be used by the Verify VAA shim program.
     let from_endpoint = super::helpers::try_live_endpoint_account(&accounts[1], "from_endpoint")
         .map_err(|e: Error| e.with_account_name("from_endpoint"))?;
@@ -143,7 +149,7 @@ pub(super) fn process(
         &[
             FastMarketOrder::SEED_PREFIX,
             &fast_market_order_vaa_digest.as_ref(),
-            fast_market_order.close_account_refund_recipient.as_ref(),
+            payer_info.key.as_ref(),
         ],
         &ID,
     );
@@ -162,8 +168,7 @@ pub(super) fn process(
         &[&[
             FastMarketOrder::SEED_PREFIX,
             &fast_market_order_vaa_digest.as_ref(),
-            // TODO: Replace with payer_info.key.
-            fast_market_order.close_account_refund_recipient.as_ref(),
+            payer_info.key.as_ref(),
             &[fast_market_order_bump],
         ]],
     )?;

@@ -92,7 +92,7 @@ pub enum MatchingEngineError {
 
     InvalidVerifyVaaShimProgram = 0x600,
 
-    // Fallback matching engine errors
+    // V2 matching engine errors
     AccountAlreadyInitialized = 0x700,
     AccountNotWritable = 0x702,
     BorshDeserializationError = 0x704,

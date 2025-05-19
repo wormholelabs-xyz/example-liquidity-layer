@@ -61,7 +61,7 @@ pub async fn initialize_fast_market_order_shimful(
     let payer_signer = config
         .payer_signer
         .clone()
-        .unwrap_or_else(|| testing_context.testing_actors.payer_signer.clone());
+        .unwrap_or_else(|| testing_context.testing_actors.solvers[0].keypair().clone());
     let guardian_signature_info = create_guardian_signatures(
         testing_context,
         test_context,
@@ -77,7 +77,7 @@ pub async fn initialize_fast_market_order_shimful(
         &[
             FastMarketOrderState::SEED_PREFIX,
             &fast_market_order.digest().as_ref(),
-            &fast_market_order.close_account_refund_recipient.as_ref(),
+            &payer_signer.pubkey().as_ref(),
         ],
         program_id,
     );
@@ -157,7 +157,7 @@ pub fn initialize_fast_market_order_shimful_instruction(
         &[
             FastMarketOrderState::SEED_PREFIX,
             &fast_market_order.digest().as_ref(),
-            &fast_market_order.close_account_refund_recipient.as_ref(),
+            &payer_signer.pubkey().as_ref(),
         ],
         program_id,
     )
